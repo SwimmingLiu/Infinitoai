@@ -235,10 +235,7 @@ async function step6_login(payload) {
     log('Step 6: Submitted email');
   }
 
-  await sleep(2000);
-
-  // Check for password field
-  const passwordInput = document.querySelector('input[type="password"]');
+  const passwordInput = await waitForLoginPasswordField();
   if (passwordInput) {
     log('Step 6: Password field found, filling password...');
     await humanPause(550, 1450);
@@ -261,6 +258,41 @@ async function step6_login(payload) {
   // No password field — OTP flow
   log('Step 6: No password field. OTP flow or auto-redirect.');
   reportComplete(6, { needsOTP: true });
+}
+
+async function waitForLoginPasswordField(timeout = 15000) {
+  const start = Date.now();
+
+  while (Date.now() - start < timeout) {
+    throwIfStopped();
+
+    const passwordInput = document.querySelector('input[type="password"]');
+    if (passwordInput) {
+      return passwordInput;
+    }
+
+    // Some flows skip the password screen and go straight to OTP or consent.
+    const otpInput = document.querySelector(
+      'input[name="code"], input[name="otp"], input[type="text"][maxlength="6"], input[inputmode="numeric"], input[maxlength="1"]'
+    );
+    if (otpInput) {
+      log('Step 6: Verification code input appeared before password field.');
+      return null;
+    }
+
+    const consentButton = document.querySelector(
+      'button[type="submit"][data-dd-action-name="Continue"], button[type="submit"]._primary_3rdp0_107'
+    );
+    if (consentButton) {
+      log('Step 6: Consent page appeared before password field.');
+      return null;
+    }
+
+    await sleep(250);
+  }
+
+  log(`Step 6: Password field did not appear within ${Math.round(timeout / 1000)}s.`, 'warn');
+  return null;
 }
 
 // ============================================================
