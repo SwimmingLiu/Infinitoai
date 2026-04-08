@@ -1231,7 +1231,7 @@ function getMailConfig(state) {
       url: `${host}/m/${encodeURIComponent(mailbox)}/`,
       label: `Inbucket Mailbox (${mailbox})`,
       navigateOnReuse: true,
-      inject: ['shared/mail-matching.js', 'shared/mail-freshness.js', 'content/utils.js', 'content/inbucket-mail.js'],
+      inject: ['shared/mail-matching.js', 'shared/mail-freshness.js', 'shared/latest-mail.js', 'content/utils.js', 'content/inbucket-mail.js'],
       injectSource: 'inbucket-mail',
     };
   }

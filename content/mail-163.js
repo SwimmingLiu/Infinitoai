@@ -18,6 +18,7 @@ const MAIL163_PREFIX = '[MultiPage:mail-163]';
 const isTopFrame = window === window.top;
 const { getStepMailMatchProfile, matchesSubjectPatterns } = MailMatching;
 const { isMailFresh, parseMailTimestampCandidates } = MailFreshness;
+const { findLatestMatchingItem } = LatestMail;
 
 console.log(MAIL163_PREFIX, 'Content script loaded on', location.href, 'frame:', isTopFrame ? 'top' : 'child');
 
@@ -142,56 +143,58 @@ async function handlePollEmail(step, payload) {
     const allItems = findMailItems();
     const useFallback = attempt > FALLBACK_AFTER;
 
-    for (const item of allItems) {
+    const latestMatch = findLatestMatchingItem(allItems, (item) => {
       const id = item.getAttribute('id') || '';
-
-      if (!useFallback && existingMailIds.has(id)) continue;
+      if (!useFallback && existingMailIds.has(id)) {
+        return false;
+      }
 
       const senderEl = item.querySelector('.nui-user');
       const sender = senderEl ? senderEl.textContent.toLowerCase() : '';
-
       const subjectEl = item.querySelector('span.da0');
       const subject = subjectEl ? subjectEl.textContent : '';
       const subjectLower = subject.toLowerCase();
-
       const ariaLabel = (item.getAttribute('aria-label') || '').toLowerCase();
 
       const senderMatch = senderFilters.some(f => sender.includes(f.toLowerCase()) || ariaLabel.includes(f.toLowerCase()));
       const subjectMatch = subjectFilters.some(f => subjectLower.includes(f.toLowerCase()) || ariaLabel.includes(f.toLowerCase()));
       const stepSpecificSubjectMatch = matchesSubjectPatterns(`${subject} ${item.getAttribute('aria-label') || ''}`, subjectProfile);
 
-      if (stepSpecificSubjectMatch || (!subjectProfile && (senderMatch || subjectMatch))) {
-        const emailTime = parseEmailDate(item);
-        if (!isMailFresh(emailTime, { now, filterAfterTimestamp })) {
-          log(`Step ${step}: Skipping stale email (date: ${emailTime ? new Date(emailTime).toLocaleString() : 'unknown'})`, 'info');
-          continue;
-        }
+      return stepSpecificSubjectMatch || (!subjectProfile && (senderMatch || subjectMatch));
+    });
 
+    if (latestMatch) {
+      const id = latestMatch.getAttribute('id') || '';
+      const subject = latestMatch.querySelector('span.da0')?.textContent || '';
+      const ariaLabel = (latestMatch.getAttribute('aria-label') || '').toLowerCase();
+      const emailTime = parseEmailDate(latestMatch);
+
+      if (!isMailFresh(emailTime, { now, filterAfterTimestamp })) {
+        log(`Step ${step}: Skipping stale email (date: ${emailTime ? new Date(emailTime).toLocaleString() : 'unknown'})`, 'info');
+      } else {
         const code = extractVerificationCode(subject + ' ' + ariaLabel);
-        if (code && excludedCodeSet.has(code)) {
-          log(`Step ${step}: Skipping excluded code: ${code}`, 'info');
-          continue;
-        }
-        if (code && !seenCodes.has(code)) {
+        if (!code) {
+          log(`Step ${step}: Latest 163 verification email has no code yet, waiting for refresh.`, 'info');
+        } else if (excludedCodeSet.has(code)) {
+          log(`Step ${step}: Latest 163 code is excluded: ${code}`, 'info');
+        } else if (seenCodes.has(code)) {
+          log(`Step ${step}: Latest 163 code was already used: ${code}`, 'info');
+        } else {
           seenCodes.add(code);
           persistSeenCodes();
           const source = useFallback && existingMailIds.has(id) ? 'fallback' : 'new';
           log(`Step ${step}: Code found: ${code} (${source}, subject: ${subject.slice(0, 40)})`, 'ok');
 
-          // Delete this email via right-click menu, WAIT for it to finish before returning
-          await deleteEmail(item, step);
-          // Extra wait to ensure deletion is processed
+          await deleteEmail(latestMatch, step);
           await sleep(1000);
 
           return { ok: true, code, emailTimestamp: emailTime, mailId: id };
-        } else if (code && seenCodes.has(code)) {
-          log(`Step ${step}: Skipping already-seen code: ${code}`, 'info');
         }
       }
     }
 
     if (attempt === FALLBACK_AFTER + 1) {
-      log(`Step ${step}: No new emails after ${FALLBACK_AFTER} attempts, falling back to first match`, 'warn');
+      log(`Step ${step}: No new emails after ${FALLBACK_AFTER} attempts, falling back to the latest matching email only`, 'warn');
     }
 
     if (attempt < maxAttempts) {

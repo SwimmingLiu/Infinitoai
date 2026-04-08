@@ -16,6 +16,7 @@ const isTopFrame = window === window.top;
 const SEEN_MAIL_IDS_KEY = 'seenInbucketMailIds';
 const { getStepMailMatchProfile, matchesSubjectPatterns } = MailMatching;
 const { isMailFresh, parseMailTimestampCandidates } = MailFreshness;
+const { findLatestMatchingItem } = LatestMail;
 
 console.log(INBUCKET_PREFIX, 'Content script loaded on', location.href, 'frame:', isTopFrame ? 'top' : 'child');
 
@@ -213,50 +214,49 @@ async function handleMailboxPollEmail(step, payload) {
 
     const entries = Array.from(findMailboxEntries()).map(parseMailboxEntry);
     const useFallback = attempt > FALLBACK_AFTER;
-    const candidates = [];
-
-    for (const mail of entries) {
-      if (!mail.unread) continue;
-      if (seenMailIds.has(mail.mailId)) continue;
-      if (!useFallback && existingMailIds.has(mail.mailId)) continue;
-      if (!isMailFresh(mail.timestamp, { now, filterAfterTimestamp })) continue;
+    const latestMatch = findLatestMatchingItem(entries, (mail) => {
+      if (!mail.unread) return false;
+      if (seenMailIds.has(mail.mailId)) return false;
+      if (!useFallback && existingMailIds.has(mail.mailId)) return false;
+      if (!isMailFresh(mail.timestamp, { now, filterAfterTimestamp })) return false;
 
       const match = rowMatchesFilters(step, mail, senderFilters, subjectFilters, '');
-      if (!match.matched) continue;
+      if (!match.matched) return false;
 
-      candidates.push({ ...mail, code: match.code });
-    }
+      return true;
+    });
 
-    for (const mail of candidates) {
-      const code = mail.code || extractVerificationCode(mail.combinedText);
-      if (!code) continue;
-      if (excludedCodeSet.has(code)) {
-        log(`Step ${step}: Skipping excluded code: ${code}`, 'info');
-        continue;
+    if (latestMatch) {
+      const match = rowMatchesFilters(step, latestMatch, senderFilters, subjectFilters, '');
+      const code = match.code || extractVerificationCode(latestMatch.combinedText);
+      if (!code) {
+        log(`Step ${step}: Latest Inbucket verification email has no code yet, waiting for refresh.`, 'info');
+      } else if (excludedCodeSet.has(code)) {
+        log(`Step ${step}: Latest Inbucket code is excluded: ${code}`, 'info');
+      } else {
+        await openMailboxEntry(latestMatch.entry);
+        await deleteCurrentMailboxMessage(step);
+
+        seenMailIds.add(latestMatch.mailId);
+        await persistSeenMailIds();
+
+        const source = existingMailIds.has(latestMatch.mailId) ? 'fallback' : 'new';
+        log(
+          `Step ${step}: Code found: ${code} (${source}, sender: ${latestMatch.sender || 'unknown'}, subject: ${(latestMatch.subject || '').slice(0, 60)})`,
+          'ok'
+        );
+
+        return {
+          ok: true,
+          code,
+          emailTimestamp: latestMatch.timestamp,
+          mailId: latestMatch.mailId,
+        };
       }
-
-      await openMailboxEntry(mail.entry);
-      await deleteCurrentMailboxMessage(step);
-
-      seenMailIds.add(mail.mailId);
-      await persistSeenMailIds();
-
-      const source = existingMailIds.has(mail.mailId) ? 'fallback' : 'new';
-      log(
-        `Step ${step}: Code found: ${code} (${source}, sender: ${mail.sender || 'unknown'}, subject: ${(mail.subject || '').slice(0, 60)})`,
-        'ok'
-      );
-
-      return {
-        ok: true,
-        code,
-        emailTimestamp: mail.timestamp,
-        mailId: mail.mailId,
-      };
     }
 
     if (attempt === FALLBACK_AFTER + 1) {
-      log(`Step ${step}: No new mailbox messages yet, falling back to older matching messages`, 'warn');
+      log(`Step ${step}: No new mailbox messages yet, falling back to the latest matching message only`, 'warn');
     }
 
     if (attempt < maxAttempts) {

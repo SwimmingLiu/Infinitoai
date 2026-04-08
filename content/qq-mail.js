@@ -18,6 +18,7 @@ const QQ_MAIL_PREFIX = '[MultiPage:qq-mail]';
 const isTopFrame = window === window.top;
 const { getStepMailMatchProfile, matchesSubjectPatterns } = MailMatching;
 const { isMailFresh, parseMailTimestampCandidates } = MailFreshness;
+const { findLatestMatchingItem } = LatestMail;
 const { getQqRefreshFolderSequence } = QqRefresh;
 
 console.log(QQ_MAIL_PREFIX, 'Content script loaded on', location.href, 'frame:', isTopFrame ? 'top' : 'child');
@@ -109,33 +110,39 @@ async function handlePollEmail(step, payload) {
 
     // Phase 1 (attempt 1~3): only look at NEW emails (not in snapshot)
     // Phase 2 (attempt 4+): fallback to first matching email in list
-    for (const item of allItems) {
+    const latestMatch = findLatestMatchingItem(allItems, (item) => {
       const mailId = item.getAttribute('data-mailid');
-
-      if (!useFallback && existingMailIds.has(mailId)) continue;
+      if (!useFallback && existingMailIds.has(mailId)) {
+        return false;
+      }
 
       const sender = (item.querySelector('.cmp-account-nick')?.textContent || '').toLowerCase();
       const subject = (item.querySelector('.mail-subject')?.textContent || '').trim();
       const digest = item.querySelector('.mail-digest')?.textContent || '';
-      const emailTime = getQqEmailTimestamp(item, now);
       const subjectLower = subject.toLowerCase();
 
       const senderMatch = senderFilters.some(f => sender.includes(f.toLowerCase()));
       const subjectMatch = subjectFilters.some(f => subjectLower.includes(f.toLowerCase()));
       const stepSpecificSubjectMatch = matchesSubjectPatterns(`${subject} ${digest}`, subjectProfile);
 
-      if (stepSpecificSubjectMatch || (!subjectProfile && (senderMatch || subjectMatch))) {
-        if (!isMailFresh(emailTime, { now, filterAfterTimestamp })) {
-          log(`Step ${step}: Skipping stale QQ email (time: ${formatMailTimestampForLog(emailTime)})`, 'info');
-          continue;
-        }
+      return stepSpecificSubjectMatch || (!subjectProfile && (senderMatch || subjectMatch));
+    });
 
+    if (latestMatch) {
+      const mailId = latestMatch.getAttribute('data-mailid');
+      const subject = (latestMatch.querySelector('.mail-subject')?.textContent || '').trim();
+      const digest = latestMatch.querySelector('.mail-digest')?.textContent || '';
+      const emailTime = getQqEmailTimestamp(latestMatch, now);
+
+      if (!isMailFresh(emailTime, { now, filterAfterTimestamp })) {
+        log(`Step ${step}: Skipping stale QQ email (time: ${formatMailTimestampForLog(emailTime)})`, 'info');
+      } else {
         const code = extractVerificationCode(subject + ' ' + digest);
-        if (code) {
-          if (excludedCodeSet.has(code)) {
-            log(`Step ${step}: Skipping excluded code: ${code}`, 'info');
-            continue;
-          }
+        if (!code) {
+          log(`Step ${step}: Latest QQ verification email has no code yet, waiting for refresh.`, 'info');
+        } else if (excludedCodeSet.has(code)) {
+          log(`Step ${step}: Latest QQ code is excluded: ${code}`, 'info');
+        } else {
           const source = useFallback && existingMailIds.has(mailId) ? 'fallback-first-match' : 'new';
           log(`Step ${step}: Code found: ${code} (${source}, subject: ${subject.slice(0, 40)})`, 'ok');
           return { ok: true, code, emailTimestamp: emailTime, mailId };
@@ -144,7 +151,7 @@ async function handlePollEmail(step, payload) {
     }
 
     if (attempt === FALLBACK_AFTER + 1) {
-      log(`Step ${step}: No new emails after ${FALLBACK_AFTER} attempts, falling back to first matching email`, 'warn');
+      log(`Step ${step}: No new emails after ${FALLBACK_AFTER} attempts, falling back to the latest matching email only`, 'warn');
     }
 
     if (attempt < maxAttempts) {
