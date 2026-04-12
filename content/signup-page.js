@@ -9,7 +9,7 @@ if (window.__MULTIPAGE_SIGNUP_PAGE_LOADED) {
 window.__MULTIPAGE_SIGNUP_PAGE_LOADED = true;
 
 console.log('[MultiPage:signup-page] Content script loaded on', location.href);
-const { isVerificationCodeRejectedText } = VerificationCode;
+const { isVerificationCodeRejectedText, isVerificationRetryStateText } = VerificationCode;
 const { getPhoneVerificationBlockedMessage, isPhoneVerificationRequiredText } = PhoneVerification;
 const { isAuthFatalErrorText } = AuthFatalErrors;
 const { getUnsupportedEmailBlockedMessage, isUnsupportedEmailBlockingStep, isUnsupportedEmailText } = UnsupportedEmail;
@@ -225,6 +225,16 @@ async function fillVerificationCode(step, payload) {
       await sleep(400);
       return await submitVerificationCodeAndWait(step);
     }
+    const visibleText = getVisiblePageText();
+    if (step === 7 && /email-verification/i.test(location.href) && isVerificationRetryStateText(visibleText)) {
+      throw new Error('Verification page entered retry state before the code input appeared. Restart this run.');
+    }
+    if (isAuthFatalErrorText(visibleText)) {
+      throw new Error('Auth fatal error page detected before verification code input appeared.');
+    }
+    if (step === 7 && isPhoneVerificationRequiredText(visibleText)) {
+      throw new Error(getPhoneVerificationBlockedMessage(step));
+    }
     throw new Error('Could not find verification code input. URL: ' + location.href);
   }
 
@@ -264,6 +274,7 @@ async function waitForVerificationSubmissionOutcome(step, hadRejectedStateBefore
     throwIfStopped();
 
     const visibleText = getVisiblePageText();
+    const hasVisibleInput = hasVisibleVerificationInput();
     if (isAuthFatalErrorText(visibleText)) {
       throw new Error('Auth fatal error page detected after verification submit.');
     }
@@ -279,8 +290,11 @@ async function waitForVerificationSubmissionOutcome(step, hadRejectedStateBefore
         reason: 'verification-code-rejected',
       };
     }
+    if (step === 7 && /email-verification/i.test(location.href) && !hasVisibleInput && isVerificationRetryStateText(visibleText)) {
+      throw new Error('Verification page entered retry state after submitting the verification code. Restart this run.');
+    }
 
-    if (location.href !== startUrl || !hasVisibleVerificationInput()) {
+    if (location.href !== startUrl || !hasVisibleInput) {
       return {
         accepted: true,
         reason: 'page-advanced',
@@ -424,14 +438,14 @@ async function step6_login(payload) {
     await sleep(500);
     const submitBtn2 = document.querySelector('button[type="submit"]')
       || await waitForElementByText('button', /continue|log\s*in|submit|sign\s*in|登录|继续/i, 5000).catch(() => null);
-    // Report complete BEFORE submit in case page navigates
-    reportComplete(6, { needsOTP: true });
 
     if (submitBtn2) {
       await humanPause(450, 1200);
       simulateClick(submitBtn2);
-      log('Step 6: Submitted password, may need verification code (step 7)');
+      log('Step 6: Submitted password, waiting for login outcome...');
     }
+    await waitForLoginSubmissionOutcome();
+    reportComplete(6, { needsOTP: true });
     return;
   }
 
@@ -458,6 +472,34 @@ async function waitForLoginPasswordField(timeout = 25000) {
   return null;
 }
 
+async function waitForLoginSubmissionOutcome(timeout = 12000) {
+  const startUrl = location.href;
+  const start = Date.now();
+
+  while (Date.now() - start < timeout) {
+    throwIfStopped();
+
+    const visibleText = getVisiblePageText();
+    if (isAuthFatalErrorText(visibleText)) {
+      throw new Error('Auth fatal error page detected after login submit.');
+    }
+    if (isLoginCredentialErrorText(visibleText)) {
+      throw new Error(getLoginCredentialErrorMessage());
+    }
+
+    if (location.href !== startUrl || !findVisiblePasswordInput()) {
+      return {
+        accepted: true,
+        reason: 'page-advanced',
+      };
+    }
+
+    await sleep(250);
+  }
+
+  throw new Error('Login did not advance after password submit. Still on the password page.');
+}
+
 function findVisiblePasswordInput() {
   const inputs = document.querySelectorAll('input[type="password"]');
   for (const input of inputs) {
@@ -466,6 +508,14 @@ function findVisiblePasswordInput() {
     }
   }
   return null;
+}
+
+function isLoginCredentialErrorText(text) {
+  return /incorrect email address or password|incorrect password|wrong password|邮箱地址或密码错误|电子邮件地址或密码错误|密码错误/i.test(String(text || ''));
+}
+
+function getLoginCredentialErrorMessage() {
+  return 'Incorrect email address or password.';
 }
 
 function isElementVisible(el) {
