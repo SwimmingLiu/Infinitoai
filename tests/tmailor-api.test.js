@@ -566,7 +566,13 @@ test('checkTmailorApiConnectivity reports api as reachable after warmup succeeds
   const calls = [];
   const fetchImpl = async (url, options = {}) => {
     calls.push({ url, options });
-    return createJsonResponse({ ok: true });
+    if (!options.method || options.method === 'GET') {
+      return createJsonResponse({ ok: true });
+    }
+
+    const payload = JSON.parse(options.body);
+    assert.equal(payload.action, 'newemail');
+    return createJsonResponse({ msg: 'ok', email: 'probe@example.com', accesstoken: 'probe-token' });
   };
 
   const result = await checkTmailorApiConnectivity({ fetchImpl });
@@ -574,8 +580,30 @@ test('checkTmailorApiConnectivity reports api as reachable after warmup succeeds
   assert.equal(result.ok, true);
   assert.equal(result.status, 'ok');
   assert.equal(result.message, 'API is reachable.');
-  assert.equal(calls.length, 1);
+  assert.equal(calls.length, 2);
   assert.equal(calls[0].options.method, 'GET');
+  assert.equal(calls[1].options.method, 'POST');
+});
+
+test('checkTmailorApiConnectivity reports Cloudflare captcha when warmup succeeds but API is risk-blocked', async () => {
+  const calls = [];
+  const fetchImpl = async (_url, options = {}) => {
+    calls.push(options.method || 'GET');
+    if (!options.method || options.method === 'GET') {
+      return createJsonResponse({ ok: true });
+    }
+
+    const payload = JSON.parse(options.body);
+    assert.equal(payload.action, 'newemail');
+    return createJsonResponse({ msg: 'error', code: 'errorcaptcha' });
+  };
+
+  const result = await checkTmailorApiConnectivity({ fetchImpl });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.status, 'error');
+  assert.match(result.message, /cloudflare captcha/i);
+  assert.deepEqual(calls, ['GET', 'POST']);
 });
 
 test('checkTmailorApiConnectivity reports a temporary failure when warmup fails', async () => {

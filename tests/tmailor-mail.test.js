@@ -12,6 +12,7 @@ function createContext() {
     clicked: 0,
     lastClicked: null,
     logs: [],
+    historyBackCalls: 0,
   };
 
   const context = {
@@ -21,6 +22,11 @@ function createContext() {
       error() {},
     },
     location: { href: 'https://tmailor.com/' },
+    history: {
+      back() {
+        state.historyBackCalls += 1;
+      },
+    },
     chrome: {
       runtime: {
         sendMessage(message, callback) {
@@ -519,6 +525,115 @@ test('tmailor keeps waiting when the mail detail opens successfully but the veri
   assert.equal(code, '778899');
 });
 
+test('tmailor returns to the inbox after step 4 reads the code from the mail detail page', async () => {
+  const context = createContext();
+  const state = context.__state;
+  context.location.href = 'https://tmailor.com/inbox?emailid=detail-123';
+  state.bodyText = '你的 ChatGPT 代码为 ******';
+
+  const detailLink = {
+    href: 'https://tmailor.com/inbox?emailid=detail-123',
+    getBoundingClientRect() {
+      return { width: 120, height: 24 };
+    },
+  };
+
+  context.document.querySelector = (selector) => {
+    if (selector === 'h1') {
+      return { textContent: '你的 ChatGPT 代码为 009087' };
+    }
+    return null;
+  };
+  context.document.querySelectorAll = (selector) => {
+    if (selector === 'button, [role="button"], a, summary') {
+      return [];
+    }
+    return [];
+  };
+  context.sleep = async () => {};
+
+  loadTmailorScript(context);
+
+  const hooks = context.__MULTIPAGE_TMAILOR_TEST_HOOKS;
+  assert.ok(hooks?.readCodeFromMailRow, 'expected tmailor test hooks to expose readCodeFromMailRow');
+
+  const row = {
+    combinedText: '你的 ChatGPT 代码为 ******',
+    element: {
+      getAttribute() {
+        return null;
+      },
+      querySelector(selector) {
+        if (selector.includes('a[href*="emailid="]')) {
+          return detailLink;
+        }
+        return null;
+      },
+      getBoundingClientRect() {
+        return { width: 120, height: 24 };
+      },
+      textContent: '你的 ChatGPT 代码为 ******',
+    },
+  };
+
+  const code = await hooks.readCodeFromMailRow(row, 4);
+
+  assert.equal(code, '009087');
+  assert.equal(state.historyBackCalls, 1);
+});
+
+test('tmailor returns to the inbox after step 7 reads the code from the mail detail page', async () => {
+  const context = createContext();
+  const state = context.__state;
+  context.location.href = 'https://tmailor.com/inbox?emailid=detail-456';
+  state.bodyText = 'Your ChatGPT code is ******';
+
+  const detailLink = {
+    href: 'https://tmailor.com/inbox?emailid=detail-456',
+    getBoundingClientRect() {
+      return { width: 120, height: 24 };
+    },
+  };
+
+  context.document.querySelector = (selector) => {
+    if (selector === 'h1') {
+      return { textContent: 'Your ChatGPT code is 665544' };
+    }
+    return null;
+  };
+  context.document.querySelectorAll = () => [];
+  context.sleep = async () => {};
+
+  loadTmailorScript(context);
+
+  const hooks = context.__MULTIPAGE_TMAILOR_TEST_HOOKS;
+  assert.ok(hooks?.readCodeFromMailRow, 'expected tmailor test hooks to expose readCodeFromMailRow');
+
+  const row = {
+    combinedText: 'Your ChatGPT code is ******',
+    element: {
+      getAttribute() {
+        return null;
+      },
+      querySelector(selector) {
+        if (selector.includes('a[href*="emailid="]')) {
+          return detailLink;
+        }
+        return null;
+      },
+      getBoundingClientRect() {
+        return { width: 120, height: 24 };
+      },
+      textContent: 'Your ChatGPT code is ******',
+    },
+  };
+
+  const code = await hooks.readCodeFromMailRow(row, 7);
+
+  assert.equal(code, '665544');
+  assert.equal(state.historyBackCalls, 1);
+});
+
 test('tmailor can open an already visible matching inbox row on the first attempt instead of waiting for refresh-only fallback', async () => {
   const context = createContext();
   context.MailMatching.getStepMailMatchProfile = () => ({
@@ -751,6 +866,81 @@ test('tmailor detects the ready mailbox state when an email and refresh button a
 
   assert.equal(state.kind, 'mailbox_ready');
   assert.equal(state.email, 'ngzwcnvc@tiksofi.uk');
+});
+
+test('tmailor ignores a stale hidden turnstile response when the mailbox itself is already visible', () => {
+  const context = createContext();
+  context.document.body.innerText = 'Your Temp Mail Address Copy this address and use it for OTPs, sign-ups, and verifications.';
+
+  const mailboxSection = {
+    tagName: 'SECTION',
+    id: 'actionEmailAddressHome',
+    className: 'tm-max-box mx-auto',
+    parentElement: null,
+    getBoundingClientRect() {
+      return { left: 140, top: 392, width: 740, height: 330 };
+    },
+    get textContent() {
+      return context.document.body.innerText;
+    },
+  };
+  const hiddenResponseInput = {
+    tagName: 'INPUT',
+    value: 'x'.repeat(517),
+    parentElement: mailboxSection,
+    getBoundingClientRect() {
+      return { left: 0, top: 0, width: 0, height: 0 };
+    },
+  };
+  const currentEmailInput = {
+    tagName: 'INPUT',
+    value: 'ngzwcnvc@tiksofi.uk',
+    disabled: false,
+    getAttribute(name) {
+      if (name === 'aria-label') {
+        return 'Your Temp Mail Address';
+      }
+      return null;
+    },
+    getBoundingClientRect() {
+      return { left: 180, top: 420, width: 360, height: 44 };
+    },
+  };
+  const newEmailButton = {
+    tagName: 'BUTTON',
+    id: 'btnNewEmail',
+    textContent: 'New Email',
+    getBoundingClientRect() {
+      return { left: 180, top: 500, width: 120, height: 40 };
+    },
+  };
+
+  context.document.querySelector = (selector) => {
+    if (selector === 'input[name="currentEmailAddress"]') {
+      return currentEmailInput;
+    }
+    if (selector === '#btnNewEmail') {
+      return newEmailButton;
+    }
+    if (selector.includes('input[name="cf-turnstile-response"]')) {
+      return hiddenResponseInput;
+    }
+    return null;
+  };
+  context.document.querySelectorAll = (selector) => {
+    if (selector === 'button, [role="button"], a, summary') {
+      return [newEmailButton];
+    }
+    return [];
+  };
+
+  loadTmailorScript(context);
+  const hooks = context.__MULTIPAGE_TMAILOR_TEST_HOOKS;
+  assert.ok(hooks?.detectTmailorPageState, 'expected tmailor to expose detectTmailorPageState');
+
+  const state = hooks.detectTmailorPageState();
+
+  assert.equal(state.kind, 'mailbox_idle');
 });
 
 test('tmailor detects the in-page turnstile challenge state when Cloudflare confirm is embedded in the mailbox view', () => {

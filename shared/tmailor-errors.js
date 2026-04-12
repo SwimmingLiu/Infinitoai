@@ -17,7 +17,7 @@
   }
 
   function getTmailorApiManualTakeoverMessage() {
-    return 'TMailor API triggered a Cloudflare captcha. Please open the TMailor page, complete the checkbox and Confirm manually, then continue.';
+    return 'TMailor API triggered a Cloudflare captcha.';
   }
 
   return {

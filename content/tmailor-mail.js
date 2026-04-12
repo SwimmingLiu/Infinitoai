@@ -253,13 +253,34 @@ function findVisibleCloudflareChallengeContainer() {
 
   let current = responseInput.parentElement || null;
   while (current) {
-    if (isElementVisible(current)) {
+    if (isElementVisible(current) && looksLikeCloudflareChallengeShell(current)) {
       return current;
     }
     current = current.parentElement || null;
   }
 
   return null;
+}
+
+function looksLikeCloudflareChallengeShell(element) {
+  if (!element) {
+    return false;
+  }
+
+  const hintText = normalizeText([
+    element.id,
+    element.className,
+    element.getAttribute?.('data-testid'),
+    element.getAttribute?.('aria-label'),
+    element.getAttribute?.('title'),
+  ].filter(Boolean).join(' ')).toLowerCase();
+
+  if (/cf-turnstile|turnstile|cloudflare|captcha|challenge/.test(hintText)) {
+    return true;
+  }
+
+  const visibleText = normalizeText(element.textContent || '').toLowerCase();
+  return /verify you are human|verify that you are not a robot|please confirm you are not a robot|i am human|not a robot|cloudflare/i.test(visibleText);
 }
 
 function findVisibleCloudflareChallengeIframe() {
@@ -1242,6 +1263,10 @@ function getCurrentDetailPageText() {
   return normalizeText(chunks.join(' '));
 }
 
+function shouldReturnToInboxAfterDetailRead(step) {
+  return step === 4 || step === 7;
+}
+
 function readCodeFromCurrentDetailPage(step, payload = {}) {
   if (!/emailid=/i.test(location.href)) {
     return null;
@@ -1312,7 +1337,7 @@ async function leaveMailDetailView() {
   return false;
 }
 
-async function readCodeFromMailRow(row) {
+async function readCodeFromMailRow(row, step = 0) {
   let code = extractVerificationCode(row?.combinedText || '');
   if (code) {
     return code;
@@ -1323,6 +1348,9 @@ async function readCodeFromMailRow(row) {
   await settleMailDetailInterruptions();
   code = await waitForCodeInPage(8000, 250);
   if (code) {
+    if (shouldReturnToInboxAfterDetailRead(step)) {
+      await leaveMailDetailView();
+    }
     return code;
   }
 
@@ -1368,6 +1396,9 @@ async function handlePollEmail(step, payload) {
 
     const currentDetailResult = readCodeFromCurrentDetailPage(step, payload);
     if (currentDetailResult && !excludedCodeSet.has(currentDetailResult.code)) {
+      if (shouldReturnToInboxAfterDetailRead(step)) {
+        await leaveMailDetailView();
+      }
       return {
         ok: true,
         ...currentDetailResult,
@@ -1393,7 +1424,7 @@ async function handlePollEmail(step, payload) {
     });
 
     if (latestMatch) {
-      const code = await readCodeFromMailRow(latestMatch);
+      const code = await readCodeFromMailRow(latestMatch, step);
 
       if (!code) {
         log(`Step ${step}: TMailor matched an email but the code is not visible yet.`, 'info');

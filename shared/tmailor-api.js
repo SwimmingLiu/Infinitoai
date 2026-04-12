@@ -17,6 +17,7 @@
     const holder = typeof globalThis !== 'undefined' ? globalThis : self;
     return {
       TmailorDomains: holder.TmailorDomains || null,
+      TmailorErrors: holder.TmailorErrors || null,
       MailMatching: holder.MailMatching || null,
       MailFreshness: holder.MailFreshness || null,
       LatestMail: holder.LatestMail || null,
@@ -31,6 +32,7 @@
     try {
       return {
         TmailorDomains: require('./tmailor-domains.js'),
+        TmailorErrors: require('./tmailor-errors.js'),
         MailMatching: require('./mail-matching.js'),
         MailFreshness: require('./mail-freshness.js'),
         LatestMail: require('./latest-mail.js'),
@@ -42,6 +44,7 @@
 
   const deps = { ...loadNodeDeps(), ...getDeps() };
   const TmailorDomains = deps.TmailorDomains;
+  const TmailorErrors = deps.TmailorErrors;
   const MailMatching = deps.MailMatching;
   const MailFreshness = deps.MailFreshness;
   const LatestMail = deps.LatestMail;
@@ -57,6 +60,15 @@
 
   const isAllowedTmailorDomain = TmailorDomains?.isAllowedTmailorDomain || function(_state, domain) {
     return /\.com$/i.test(String(domain || ''));
+  };
+
+  const isTmailorApiCaptchaError = TmailorErrors?.isTmailorApiCaptchaError || function(error) {
+    const message = typeof error === 'string' ? error : error?.message || '';
+    return /errorcaptcha/i.test(message);
+  };
+
+  const getTmailorApiManualTakeoverMessage = TmailorErrors?.getTmailorApiManualTakeoverMessage || function() {
+    return 'TMailor API triggered a Cloudflare captcha. Please open the TMailor page, complete the checkbox and Confirm manually, then continue.';
   };
 
   const getStepMailMatchProfile = MailMatching?.getStepMailMatchProfile || function() {
@@ -241,6 +253,30 @@
   async function checkTmailorApiConnectivity(options) {
     try {
       await warmupTmailorSession(options);
+      const data = await callTmailorApi({
+        action: 'newemail',
+        payload: {
+          curentToken: null,
+        },
+        fetchImpl: options?.fetchImpl,
+        baseUrl: options?.baseUrl,
+        signal: options?.signal,
+        requestTimeoutMs: options?.requestTimeoutMs,
+      });
+
+      if (data.msg !== 'ok') {
+        const apiCode = String(data.code || data.msg || 'unknown_error');
+        if (isTmailorApiCaptchaError(apiCode)) {
+          return {
+            ok: false,
+            status: 'error',
+            message: getTmailorApiManualTakeoverMessage(),
+          };
+        }
+
+        throw new Error('TMailor API connectivity check failed: ' + apiCode);
+      }
+
       return {
         ok: true,
         status: 'ok',

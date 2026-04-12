@@ -16,13 +16,9 @@ test('ignores unrelated TMailor API failures for captcha detection', () => {
   assert.equal(isTmailorApiCaptchaError('TMailor API request failed (503).'), false);
 });
 
-test('manual takeover message tells the user to complete Cloudflare in the page', () => {
-  assert.match(
+test('manual takeover message is the short Cloudflare captcha notice', () => {
+  assert.equal(
     getTmailorApiManualTakeoverMessage(),
-    /cloudflare captcha/i
-  );
-  assert.match(
-    getTmailorApiManualTakeoverMessage(),
-    /complete the checkbox and confirm/i
+    'TMailor API triggered a Cloudflare captcha.'
   );
 });
