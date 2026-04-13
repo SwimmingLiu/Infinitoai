@@ -1644,6 +1644,9 @@ test('tmailor retries Confirm after checkbox success when the challenge shell st
   context.chrome.runtime.sendMessage = (message, callback) => {
     state.runtimeMessages = state.runtimeMessages || [];
     state.runtimeMessages.push(message);
+    if (message.type === 'DEBUGGER_CLICK_AT') {
+      responseToken = 'verified-token';
+    }
     const response = { ok: true };
     if (typeof callback === 'function') {
       callback(response);
@@ -1730,6 +1733,9 @@ test('tmailor does not click Confirm while the turnstile shell is still visible 
   context.chrome.runtime.sendMessage = (message, callback) => {
     state.runtimeMessages = state.runtimeMessages || [];
     state.runtimeMessages.push(message);
+    if (message.type === 'DEBUGGER_CLICK_AT') {
+      responseToken = 'verified-token';
+    }
     const response = { ok: true };
     if (typeof callback === 'function') {
       callback(response);
@@ -2814,4 +2820,147 @@ test('tmailor fetch email stops and asks for manual takeover when Cloudflare con
     () => hooks.fetchTmailorEmail({ generateNew: true, domainState: {} }),
     /Cloudflare challenge detected on TMailor\. Automatic verification did not complete, please take over manually\./i
   );
+});
+
+test('tmailor waits longer for the mailbox to appear after a successful Cloudflare clear instead of clicking New Email again immediately', async () => {
+  const context = createContext();
+  const state = context.__state;
+  let now = 0;
+  let responseToken = '';
+  let challengeVisible = false;
+  let newEmailClicks = 0;
+  context.Date = class extends Date {
+    static now() {
+      return now;
+    }
+  };
+
+  const currentEmailInput = {
+    value: 'oldbox@fbhotro.com',
+    getAttribute(name) {
+      if (name === 'aria-label') return 'Your Temp Mail Address';
+      if (name === 'value') return this.value;
+      return null;
+    },
+    getBoundingClientRect() {
+      return { left: 250, top: 441, width: 520, height: 64 };
+    },
+  };
+  const newEmailButton = {
+    id: 'btnNewEmail',
+    tagName: 'BUTTON',
+    textContent: 'New Email',
+    getBoundingClientRect() {
+      return { left: 300, top: 520, width: 140, height: 40 };
+    },
+  };
+  const confirmButton = {
+    id: 'btnNewEmailForm',
+    tagName: 'BUTTON',
+    textContent: 'Confirm',
+    disabled: false,
+    getAttribute(name) {
+      if (name === 'aria-disabled') return 'false';
+      return null;
+    },
+    getBoundingClientRect() {
+      return { left: 449, top: 555, width: 122, height: 41 };
+    },
+  };
+  const turnstileFrame = {
+    tagName: 'IFRAME',
+    src: 'https://challenges.cloudflare.com/cdn-cgi/challenge-platform/h/b/turnstile/if/ov2/av0/rcv/456',
+    title: 'Widget containing a Cloudflare security challenge',
+    getAttribute(name) {
+      if (name === 'src') return this.src;
+      if (name === 'title') return this.title;
+      return null;
+    },
+    getBoundingClientRect() {
+      return { left: 405, top: 478, width: 210, height: 50 };
+    },
+  };
+  const turnstileContainer = {
+    tagName: 'DIV',
+    className: 'cf-turnstile h-[80px] flex items-center justify-center',
+    getBoundingClientRect() {
+      return { left: 360, top: 463, width: 300, height: 80 };
+    },
+  };
+
+  context.document.body = {
+    get innerText() {
+      return challengeVisible
+        ? 'Create New Email Please verify that you are not a robot. Confirm'
+        : 'Your Temp Mail Address New Email';
+    },
+    set innerText(value) {
+      state.bodyText = value;
+    },
+  };
+  context.document.querySelector = (selector) => {
+    if (selector === '#btnNewEmail') return newEmailButton;
+    if (selector === '#btnNewEmailForm') return challengeVisible ? confirmButton : null;
+    if (selector === 'input[name="currentEmailAddress"]') return currentEmailInput;
+    if (selector.includes('iframe[src*="challenges.cloudflare.com"]') || selector.includes('iframe[title*="Cloudflare"]') || selector.includes('iframe[title*="Widget containing"]')) {
+      return challengeVisible ? turnstileFrame : null;
+    }
+    if (selector === '.cf-turnstile' || selector.includes('.cf-turnstile') || selector.includes('.html-captcha')) {
+      return challengeVisible ? turnstileContainer : null;
+    }
+    if (selector.includes('input[name="cf-turnstile-response"]')) {
+      return challengeVisible || responseToken ? { value: responseToken } : null;
+    }
+    return null;
+  };
+  context.document.querySelectorAll = (selector) => {
+    if (selector === 'button, [role="button"], a, summary') {
+      return challengeVisible ? [newEmailButton, confirmButton] : [newEmailButton];
+    }
+    if (selector === 'input, textarea') {
+      return [currentEmailInput];
+    }
+    return [];
+  };
+  context.simulateClick = (target) => {
+    state.clicked += 1;
+    state.lastClicked = target;
+    if (target === newEmailButton) {
+      newEmailClicks += 1;
+      if (newEmailClicks === 1) {
+        challengeVisible = true;
+      }
+    }
+    if (target === confirmButton) {
+      responseToken = 'verified-token';
+      challengeVisible = false;
+    }
+  };
+  context.chrome.runtime.sendMessage = (message, callback) => {
+    state.runtimeMessages = state.runtimeMessages || [];
+    state.runtimeMessages.push(message);
+    if (message.type === 'DEBUGGER_CLICK_AT') {
+      responseToken = 'verified-token';
+    }
+    const response = { ok: true };
+    if (typeof callback === 'function') {
+      callback(response);
+    }
+    return Promise.resolve(response);
+  };
+  context.sleep = async (ms = 0) => {
+    now += ms;
+    if (!challengeVisible && responseToken && now >= 3000) {
+      currentEmailInput.value = 'freshbox@fbhotro.com';
+    }
+  };
+
+  loadTmailorScript(context);
+  const hooks = context.__MULTIPAGE_TMAILOR_TEST_HOOKS;
+  assert.ok(hooks?.fetchTmailorEmail, 'expected tmailor to expose fetchTmailorEmail');
+
+  const result = await hooks.fetchTmailorEmail({ generateNew: true, domainState: {} });
+
+  assert.equal(result.email, 'freshbox@fbhotro.com');
+  assert.equal(newEmailClicks, 1);
 });

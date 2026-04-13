@@ -1102,9 +1102,12 @@ async function fetchTmailorEmail(payload = {}) {
     assertNoFatalMailboxError();
     simulateClick(newEmailButton);
     log(`TMailor: Clicked New Email (${attempt}/25)`);
-    await ensureCloudflareChallengeClearedOrThrow(12000);
+    const clearedCloudflare = await ensureCloudflareChallengeClearedOrThrow(12000);
     assertNoManualTakeoverBlockers();
-    await sleepWithMailboxPatrol(1200, { reason: 'waiting for the new mailbox to generate' });
+    await sleepWithMailboxPatrol(
+      clearedCloudflare ? 3200 : 1200,
+      { reason: 'waiting for the new mailbox to generate' }
+    );
 
     await maybeChooseAllowedDomain(domainState);
     await sleepWithMailboxPatrol(800, { reason: 'waiting for the mailbox domain selection to settle' });
