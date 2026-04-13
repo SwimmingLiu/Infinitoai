@@ -27,7 +27,7 @@ const { addDuckMailRetryHint } = DuckMailErrors;
 const { isTmailorApiCaptchaError } = TmailorErrors;
 const { getTmailorApiOnlyPollingMessage, shouldUseTmailorApiMailboxOnly } = TmailorMailboxStrategy;
 const { buildManualTmailorCodeFetchConfig, getTmailorVerificationProfile } = TmailorVerificationProfiles;
-const { getContentScriptQueueTimeout } = ContentScriptQueue;
+const { getContentScriptQueueTimeout, queueCommandForReinjection } = ContentScriptQueue;
 const { mergeLoginVerificationCodeExclusions } = LoginVerificationCodes;
 const { DEFAULT_EMAIL_SOURCE, generate33MailAddress, get33MailDomainForProvider, sanitizeEmailSource } = EmailAddresses;
 const { chooseMailProviderForAutoRun, getConfiguredRotatableMailProviders, getNextMailProviderAvailabilityTimestamp, isRotatableMailProvider, pruneMailProviderUsage, recordMailProviderUsage } = MailProviderRotation;
@@ -143,6 +143,7 @@ const DEFAULT_STATE = {
     failedRuns: 0,
     totalSuccessfulDurationMs: 0,
     recentSuccessDurationsMs: [],
+    recentSuccessEntries: [],
     failureBuckets: [],
   }),
   tmailorDomainState: DEFAULT_TMAILOR_DOMAIN_STATE,
@@ -830,7 +831,17 @@ async function sendToContentScript(source, message) {
         'warn'
       );
     }
-    return queueCommand(source, message, queueTimeout);
+    return queueCommandForReinjection({
+      source,
+      message,
+      timeout: queueTimeout,
+      queueCommand,
+      reinject: async () => {
+        const readyImmediately = await prepareReclaimedTab(source, entry.tabId);
+        return readyImmediately ? entry.tabId : null;
+      },
+      flushCommand,
+    });
   }
 }
 
@@ -1324,6 +1335,7 @@ async function setAutoRunStats(successfulRunsOrStats, failedRuns) {
         failedRuns,
         totalSuccessfulDurationMs: autoRunStatsState.totalSuccessfulDurationMs,
         recentSuccessDurationsMs: autoRunStatsState.recentSuccessDurationsMs,
+        recentSuccessEntries: autoRunStatsState.recentSuccessEntries,
         failureBuckets: autoRunStatsState.failureBuckets,
       });
 
@@ -1347,6 +1359,7 @@ function sendAutoRunStatus(phase, overrides = {}) {
       failedRuns: autoRunFailedRuns,
       totalSuccessfulDurationMs: autoRunStatsState.totalSuccessfulDurationMs,
       recentSuccessDurationsMs: autoRunStatsState.recentSuccessDurationsMs,
+      recentSuccessEntries: autoRunStatsState.recentSuccessEntries,
       failureBuckets: autoRunStatsState.failureBuckets,
       ...overrides,
     }),
@@ -1368,6 +1381,7 @@ async function handOffPausedAutoRunToManual(step) {
       infiniteMode: autoRunInfinite,
     }),
     startedAt: autoRunCurrentRunStartedAt,
+    successMode: autoRunCurrentSuccessMode,
   };
 
   const waiter = resumeWaiter;
@@ -1409,6 +1423,7 @@ async function runManualFlow(startStep) {
     if (handedOffPausedAutoRun && inheritedRunContext) {
       await setAutoRunStats(recordAutoRunSuccess(autoRunStatsState, {
         durationMs: Math.max(0, Date.now() - (inheritedRunContext.startedAt || Date.now())),
+        mode: autoRunCurrentSuccessMode || inheritedRunContext.successMode,
       }));
       sendAutoRunStatus('stopped', {
         currentRun: inheritedRunContext.currentRun,
@@ -1702,6 +1717,7 @@ async function fetchTmailorEmail(options = {}) {
           );
         },
       });
+      markAutoRunCurrentSuccessMode('api');
       await setTmailorMailboxState(result.email, result.accessToken);
       await addLog(`TMailor API: Mailbox ready ${result.email} (token saved for API inbox polling).`, 'ok');
       return result.email;
@@ -1768,6 +1784,17 @@ let autoRunLastRotatedMailProvider = null;
 let autoRunTask = null;
 let manualHandoffRunContext = null;
 let autoRunCurrentRunStartedAt = 0;
+let autoRunCurrentSuccessMode = 'simulated';
+
+function resetAutoRunCurrentSuccessMode() {
+  autoRunCurrentSuccessMode = 'simulated';
+}
+
+function markAutoRunCurrentSuccessMode(mode) {
+  if (String(mode || '').trim().toLowerCase() === 'api') {
+    autoRunCurrentSuccessMode = 'api';
+  }
+}
 
 async function recordVisibleAutoRunFailure(errorMessage, overrides = {}) {
   const failureRecord = buildAutoRunFailureRecord({
@@ -1837,12 +1864,14 @@ async function autoRunLoop(totalRuns, infiniteMode = false, options = {}) {
   autoRunLastRotatedMailProvider = null;
   manualHandoffRunContext = null;
   autoRunCurrentRunStartedAt = 0;
+  resetAutoRunCurrentSuccessMode();
   if (!preserveStats) {
     await setAutoRunStats({
       successfulRuns: 0,
       failedRuns: 0,
       totalSuccessfulDurationMs: 0,
       recentSuccessDurationsMs: [],
+      recentSuccessEntries: [],
       failureBuckets: [],
     });
   }
@@ -1922,6 +1951,7 @@ async function autoRunLoop(totalRuns, infiniteMode = false, options = {}) {
     const runTargetText = autoRunInfinite ? `${run}/∞` : `${run}/${totalRuns}`;
     const runStartedAt = Date.now();
     autoRunCurrentRunStartedAt = runStartedAt;
+    resetAutoRunCurrentSuccessMode();
     await addLog(`=== Auto Run ${runTargetText} — Phase 1: Get OAuth link & open signup ===`, 'info');
 
     try {
@@ -1971,6 +2001,7 @@ async function autoRunLoop(totalRuns, infiniteMode = false, options = {}) {
       await addLog(`=== Run ${runTargetText} COMPLETE! ===`, 'ok');
       await setAutoRunStats(recordAutoRunSuccess(autoRunStatsState, {
         durationMs: Math.max(0, Date.now() - runStartedAt),
+        mode: autoRunCurrentSuccessMode,
       }));
 
     } catch (err) {
@@ -2013,6 +2044,7 @@ async function autoRunLoop(totalRuns, infiniteMode = false, options = {}) {
 
   await addLog(summary.message, summary.phase === 'complete' ? 'ok' : 'warn');
   autoRunCurrentRunStartedAt = 0;
+  resetAutoRunCurrentSuccessMode();
   chrome.runtime.sendMessage({
     type: 'AUTO_RUN_STATUS',
     payload: buildAutoRunStatusPayload({
@@ -2022,6 +2054,9 @@ async function autoRunLoop(totalRuns, infiniteMode = false, options = {}) {
       infiniteMode: autoRunInfinite,
       successfulRuns: autoRunSuccessfulRuns,
       failedRuns: autoRunFailedRuns,
+      totalSuccessfulDurationMs: autoRunStatsState.totalSuccessfulDurationMs,
+      recentSuccessDurationsMs: autoRunStatsState.recentSuccessDurationsMs,
+      recentSuccessEntries: autoRunStatsState.recentSuccessEntries,
       failureBuckets: autoRunStatsState.failureBuckets,
       summaryMessage: summary.message,
       summaryToast: summary.toastMessage,
@@ -2280,6 +2315,7 @@ async function pollVerificationCodeFromMail(step, mail, payload) {
           );
         },
       });
+      markAutoRunCurrentSuccessMode('api');
       await addLog(`Step ${step}: TMailor API returned verification code ${apiResult.code}.`, 'ok');
       return apiResult;
     } catch (err) {

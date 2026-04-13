@@ -358,7 +358,7 @@ header {
 .run-stats-summary {
   list-style: none;
   cursor: pointer;
-  padding: 10px 12px;
+  padding: 8px 12px;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -405,6 +405,23 @@ header {
 .run-stat-pill.failure {
   border-color: rgba(220, 38, 38, 0.2);
   background: var(--red-soft);
+  color: var(--red);
+}
+
+.run-stat-text {
+  display: inline-flex;
+  align-items: center;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.25;
+}
+
+.run-stat-text.success {
+  color: var(--green);
+}
+
+.run-stat-text.failure {
   color: var(--red);
 }
 
@@ -468,6 +485,25 @@ header {
   font-weight: 700;
   color: var(--green);
   font-family: 'JetBrains Mono', monospace;
+}
+
+.run-success-meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.run-success-source {
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.run-success-source-api {
+  color: var(--blue);
+}
+
+.run-success-source-simulated {
+  color: var(--cyan);
 }
 
 .run-failure-empty {

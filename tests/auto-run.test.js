@@ -117,6 +117,11 @@ test('buildAutoRunStatusPayload always includes sanitized success and failure co
       failedRuns: -1,
       totalSuccessfulDurationMs: '45000',
       recentSuccessDurationsMs: ['1000', '2000', 'bad'],
+      recentSuccessEntries: [
+        { durationMs: '1000', mode: 'api' },
+        { durationMs: 'bad', mode: 'weird' },
+        { durationMs: '2000', mode: 'simulated' },
+      ],
     }),
     {
       phase: 'running',
@@ -127,6 +132,10 @@ test('buildAutoRunStatusPayload always includes sanitized success and failure co
       failedRuns: 0,
       totalSuccessfulDurationMs: 45000,
       recentSuccessDurationsMs: [1000, 2000],
+      recentSuccessEntries: [
+        { durationMs: 1000, mode: 'api' },
+        { durationMs: 2000, mode: 'simulated' },
+      ],
       failureBuckets: [],
       summaryMessage: '',
       summaryToast: '',
@@ -159,6 +168,7 @@ test('buildAutoRunStatusPayload keeps wait metadata for timed auto-run pauses', 
       failedRuns: 1,
       totalSuccessfulDurationMs: 123456,
       recentSuccessDurationsMs: [61000, 62456],
+      recentSuccessEntries: [],
       failureBuckets: [],
       summaryMessage: '',
       summaryToast: '',
@@ -200,6 +210,7 @@ test('buildAutoRunStatusPayload preserves grouped failure stats for sidepanel re
       failedRuns: 1,
       totalSuccessfulDurationMs: 0,
       recentSuccessDurationsMs: [],
+      recentSuccessEntries: [],
       failureBuckets: [
         {
           key: 'step-4::mail',

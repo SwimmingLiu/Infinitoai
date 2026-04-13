@@ -30,6 +30,31 @@
     return numeric;
   }
 
+  function sanitizeSuccessMode(value) {
+    const normalized = String(value || '').trim().toLowerCase();
+    if (normalized === 'api') {
+      return 'api';
+    }
+    if (normalized === 'simulated' || normalized === 'manual' || normalized === 'dom' || normalized === 'page') {
+      return 'simulated';
+    }
+    return 'unknown';
+  }
+
+  function sanitizeRecentSuccessEntries(entries) {
+    if (!Array.isArray(entries)) {
+      return [];
+    }
+
+    return entries
+      .map((entry) => ({
+        durationMs: sanitizeDurationMs(entry?.durationMs ?? entry),
+        mode: sanitizeSuccessMode(entry?.mode),
+      }))
+      .filter((entry) => entry.durationMs > 0)
+      .slice(0, 20);
+  }
+
   function shouldContinueAutoRunAfterError(error) {
     const message = getErrorMessage(error);
     return message !== STOP_ERROR_MESSAGE && message !== AUTO_RUN_HANDOFF_MESSAGE;
@@ -51,12 +76,15 @@
     failedRuns = 0,
     totalSuccessfulDurationMs = 0,
     recentSuccessDurationsMs = [],
+    recentSuccessEntries = [],
     failureBuckets = [],
     summaryMessage = '',
     summaryToast = '',
     waitUntilTimestamp = null,
     waitReason = '',
   }) {
+    const normalizedSuccessEntries = sanitizeRecentSuccessEntries(recentSuccessEntries);
+
     return {
       phase,
       currentRun,
@@ -71,6 +99,7 @@
           .filter((value) => value > 0)
           .slice(0, 20)
         : [],
+      recentSuccessEntries: normalizedSuccessEntries,
       failureBuckets: Array.isArray(failureBuckets) ? failureBuckets : [],
       summaryMessage,
       summaryToast,

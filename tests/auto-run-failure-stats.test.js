@@ -69,10 +69,15 @@ test('recordAutoRunSuccess increments success count and accumulates successful d
       failedRuns: 1,
       totalSuccessfulDurationMs: 8000,
       recentSuccessDurationsMs: [5000, 3000],
+      recentSuccessEntries: [
+        { durationMs: 5000, mode: 'simulated' },
+        { durationMs: 3000, mode: 'api' },
+      ],
       failureBuckets: [],
     },
     {
       durationMs: 3500,
+      mode: 'api',
     }
   );
 
@@ -81,6 +86,11 @@ test('recordAutoRunSuccess increments success count and accumulates successful d
     failedRuns: 1,
     totalSuccessfulDurationMs: 11500,
     recentSuccessDurationsMs: [3500, 5000, 3000],
+    recentSuccessEntries: [
+      { durationMs: 3500, mode: 'api' },
+      { durationMs: 5000, mode: 'simulated' },
+      { durationMs: 3000, mode: 'api' },
+    ],
     failureBuckets: [],
   });
 });
@@ -92,6 +102,11 @@ test('normalizeAutoRunStats sanitizes total successful duration for legacy and m
       failedRuns: '2',
       totalSuccessfulDurationMs: '9123',
       recentSuccessDurationsMs: ['1000', -5, 'oops', 2500],
+      recentSuccessEntries: [
+        { durationMs: '1000', mode: 'api' },
+        { durationMs: 'oops', mode: 'weird' },
+        { durationMs: 2500, mode: 'simulated' },
+      ],
       failureBuckets: [],
     }),
     {
@@ -99,6 +114,10 @@ test('normalizeAutoRunStats sanitizes total successful duration for legacy and m
       failedRuns: 2,
       totalSuccessfulDurationMs: 9123,
       recentSuccessDurationsMs: [1000, 2500],
+      recentSuccessEntries: [
+        { durationMs: 1000, mode: 'api' },
+        { durationMs: 2500, mode: 'simulated' },
+      ],
       failureBuckets: [],
     }
   );

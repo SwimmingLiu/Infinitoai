@@ -20,6 +20,17 @@
     return Number.isFinite(numeric) && numeric > 0 ? numeric : 0;
   }
 
+  function normalizeSuccessMode(value) {
+    const normalized = String(value || '').trim().toLowerCase();
+    if (normalized === 'api') {
+      return 'api';
+    }
+    if (normalized === 'simulated' || normalized === 'manual' || normalized === 'dom' || normalized === 'page') {
+      return 'simulated';
+    }
+    return 'unknown';
+  }
+
   function normalizeRecentSuccessDurations(values) {
     if (!Array.isArray(values)) {
       return [];
@@ -32,6 +43,29 @@
         continue;
       }
       normalized.push(durationMs);
+      if (normalized.length >= MAX_RECENT_SUCCESS_DURATIONS) {
+        break;
+      }
+    }
+
+    return normalized;
+  }
+
+  function normalizeRecentSuccessEntries(entries) {
+    if (!Array.isArray(entries)) {
+      return [];
+    }
+
+    const normalized = [];
+    for (const entry of entries) {
+      const durationMs = sanitizeDurationMs(entry?.durationMs ?? entry);
+      if (!durationMs) {
+        continue;
+      }
+      normalized.push({
+        durationMs,
+        mode: normalizeSuccessMode(entry?.mode),
+      });
       if (normalized.length >= MAX_RECENT_SUCCESS_DURATIONS) {
         break;
       }
@@ -100,6 +134,7 @@
     const failedRuns = Math.max(0, Number.parseInt(String(stats.failedRuns ?? 0), 10) || 0);
     const totalSuccessfulDurationMs = sanitizeDurationMs(stats.totalSuccessfulDurationMs);
     const recentSuccessDurationsMs = normalizeRecentSuccessDurations(stats.recentSuccessDurationsMs);
+    const recentSuccessEntries = normalizeRecentSuccessEntries(stats.recentSuccessEntries);
     const failureBuckets = Array.isArray(stats.failureBuckets)
       ? stats.failureBuckets.map(normalizeFailureBucket).filter((bucket) => bucket.count > 0)
       : [];
@@ -109,6 +144,7 @@
       failedRuns,
       totalSuccessfulDurationMs,
       recentSuccessDurationsMs,
+      recentSuccessEntries,
       failureBuckets,
     };
   }
@@ -158,6 +194,7 @@
       failedRuns: normalizedStats.failedRuns + 1,
       totalSuccessfulDurationMs: normalizedStats.totalSuccessfulDurationMs,
       recentSuccessDurationsMs: normalizedStats.recentSuccessDurationsMs,
+      recentSuccessEntries: normalizedStats.recentSuccessEntries,
       failureBuckets,
     };
   }
@@ -165,15 +202,20 @@
   function recordAutoRunSuccess(stats = {}, success = {}) {
     const normalizedStats = normalizeAutoRunStats(stats);
     const durationMs = sanitizeDurationMs(success.durationMs);
+    const recentSuccessEntries = normalizeRecentSuccessEntries([
+      {
+        durationMs,
+        mode: success.mode,
+      },
+      ...normalizedStats.recentSuccessEntries,
+    ]);
 
     return {
       successfulRuns: normalizedStats.successfulRuns + 1,
       failedRuns: normalizedStats.failedRuns,
       totalSuccessfulDurationMs: normalizedStats.totalSuccessfulDurationMs + durationMs,
-      recentSuccessDurationsMs: normalizeRecentSuccessDurations([
-        durationMs,
-        ...normalizedStats.recentSuccessDurationsMs,
-      ]),
+      recentSuccessDurationsMs: recentSuccessEntries.map((entry) => entry.durationMs),
+      recentSuccessEntries,
       failureBuckets: normalizedStats.failureBuckets,
     };
   }

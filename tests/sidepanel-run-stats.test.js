@@ -21,8 +21,10 @@ test('buildRunSuccessSummaryHtml renders success count with average duration', (
     totalSuccessfulDurationMs: 93000,
   });
 
+  assert.match(html, /run-stat-text success/);
   assert.match(html, /成功 3/);
   assert.match(html, /均时 00:31/);
+  assert.doesNotMatch(html, /run-stat-pill/);
 });
 
 test('buildRunFailureSummaryHtml renders total error count', () => {
@@ -30,15 +32,24 @@ test('buildRunFailureSummaryHtml renders total error count', () => {
     failedRuns: 2,
   });
 
+  assert.match(html, /run-stat-text failure/);
   assert.match(html, /错误 2/);
+  assert.doesNotMatch(html, /run-stat-pill/);
 });
 
 test('buildRunSuccessDetailsHtml renders recent successful durations in descending recency order', () => {
   const html = buildRunSuccessDetailsHtml({
     recentSuccessDurationsMs: [61000, 48000, 3050],
+    recentSuccessEntries: [
+      { durationMs: 61000, mode: 'api' },
+      { durationMs: 48000, mode: 'simulated' },
+      { durationMs: 3050, mode: 'unknown' },
+    ],
   });
 
   assert.match(html, /最近 20 次成功耗时/);
+  assert.match(html, /API/);
+  assert.match(html, /模拟操作/);
   assert.match(html, /01:01/);
   assert.match(html, /00:48/);
   assert.match(html, /00:03/);
@@ -115,6 +126,10 @@ test('normalizeDisplayedAutoRunStats keeps grouped failure buckets from auto-run
     failedRuns: '1',
     totalSuccessfulDurationMs: '62000',
     recentSuccessDurationsMs: ['31000', '30000'],
+    recentSuccessEntries: [
+      { durationMs: '31000', mode: 'api' },
+      { durationMs: '30000', mode: 'simulated' },
+    ],
     failureBuckets: [
       {
         key: 'step-4::mail',
@@ -133,6 +148,10 @@ test('normalizeDisplayedAutoRunStats keeps grouped failure buckets from auto-run
     failedRuns: 1,
     totalSuccessfulDurationMs: 62000,
     recentSuccessDurationsMs: [31000, 30000],
+    recentSuccessEntries: [
+      { durationMs: 31000, mode: 'api' },
+      { durationMs: 30000, mode: 'simulated' },
+    ],
     failureBuckets: [
       {
         key: 'step-4::mail',

@@ -45,37 +45,60 @@
   function buildRunStatsSummaryHtml(stats = {}) {
     const normalizedStats = normalizeAutoRunStats(stats);
     return `
-      <span class="run-stat-pill success">成功 ${normalizedStats.successfulRuns} · 均时 ${escapeHtml(formatRunStatsAverageDuration(normalizedStats))}</span>
-      <span class="run-stat-pill failure">错误 ${normalizedStats.failedRuns}</span>
+      <span class="run-stat-text success">成功 ${normalizedStats.successfulRuns} · 均时 ${escapeHtml(formatRunStatsAverageDuration(normalizedStats))}</span>
+      <span class="run-stat-text failure">错误 ${normalizedStats.failedRuns}</span>
     `;
   }
 
   function buildRunSuccessSummaryHtml(stats = {}) {
     const normalizedStats = normalizeAutoRunStats(stats);
-    return `<span class="run-stat-pill success">成功 ${normalizedStats.successfulRuns} · 均时 ${escapeHtml(formatRunStatsAverageDuration(normalizedStats))}</span>`;
+    return `<span class="run-stat-text success">成功 ${normalizedStats.successfulRuns} · 均时 ${escapeHtml(formatRunStatsAverageDuration(normalizedStats))}</span>`;
   }
 
   function buildRunFailureSummaryHtml(stats = {}) {
     const normalizedStats = normalizeAutoRunStats(stats);
-    return `<span class="run-stat-pill failure">错误 ${normalizedStats.failedRuns}</span>`;
+    return `<span class="run-stat-text failure">错误 ${normalizedStats.failedRuns}</span>`;
+  }
+
+  function formatSuccessModeLabel(mode) {
+    if (mode === 'api') {
+      return 'API';
+    }
+    if (mode === 'simulated') {
+      return '模拟操作';
+    }
+    return '';
+  }
+
+  function getRecentSuccessDisplayEntries(stats = {}) {
+    const normalizedStats = normalizeAutoRunStats(stats);
+    return normalizedStats.recentSuccessDurationsMs.map((durationMs, index) => ({
+      durationMs,
+      mode: normalizedStats.recentSuccessEntries[index]?.mode || 'unknown',
+    }));
   }
 
   function buildRunSuccessDetailsHtml(stats = {}) {
-    const normalizedStats = normalizeAutoRunStats(stats);
-    if (!normalizedStats.recentSuccessDurationsMs.length) {
+    const successEntries = getRecentSuccessDisplayEntries(stats);
+    if (!successEntries.length) {
       return '<div class="run-success-empty">暂无成功记录</div>';
     }
 
     return `
       <div class="run-success-list-label">最近 20 次成功耗时</div>
       <div class="run-success-list">
-        ${normalizedStats.recentSuccessDurationsMs.map((durationMs, index) => `
+        ${successEntries.map((entry, index) => `
           <div class="run-success-item">
             <span class="run-success-rank">#${index + 1}</span>
-            <span class="run-success-duration">${escapeHtml(formatRunStatsAverageDuration({
+            <div class="run-success-meta">
+              ${formatSuccessModeLabel(entry.mode)
+                ? `<span class="run-success-source run-success-source-${escapeHtml(entry.mode)}">${escapeHtml(formatSuccessModeLabel(entry.mode))}</span>`
+                : ''}
+              <span class="run-success-duration">${escapeHtml(formatRunStatsAverageDuration({
               successfulRuns: 1,
-              totalSuccessfulDurationMs: durationMs,
+              totalSuccessfulDurationMs: entry.durationMs,
             }))}</span>
+            </div>
           </div>
         `).join('')}
       </div>
