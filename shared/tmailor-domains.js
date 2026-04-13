@@ -73,7 +73,6 @@
         'coffeejadore.com',
         'accclone.com',
         'emailcoffeehouse.com',
-        'nickmxh.com',
       ],
       blacklist: [
         'benphim.com',
@@ -81,6 +80,7 @@
         'haibabon.com',
         'hetzez.com',
         'img-free.com',
+        'nickmxh.com',
         'pippoc.com',
         'phimib.com',
         'storebanme.com',
@@ -93,6 +93,7 @@
         'haibabon.com': { successCount: 0, failureCount: 1 },
         'hetzez.com': { successCount: 0, failureCount: 1 },
         'img-free.com': { successCount: 0, failureCount: 1 },
+        'nickmxh.com': { successCount: 0, failureCount: 1 },
         'pippoc.com': { successCount: 0, failureCount: 1 },
         'phimib.com': { successCount: 0, failureCount: 1 },
         'storebanme.com': { successCount: 0, failureCount: 1 },

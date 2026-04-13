@@ -10,8 +10,7 @@
     "dulich84.com",
     "coffeejadore.com",
     "accclone.com",
-    "emailcoffeehouse.com",
-    "nickmxh.com"
+    "emailcoffeehouse.com"
   ],
   "blacklist": [
     "benphim.com",
@@ -19,6 +18,7 @@
     "haibabon.com",
     "hetzez.com",
     "img-free.com",
+    "nickmxh.com",
     "pippoc.com",
     "phimib.com",
     "storebanme.com",
@@ -43,6 +43,10 @@
       "failureCount": 1
     },
     "img-free.com": {
+      "successCount": 0,
+      "failureCount": 1
+    },
+    "nickmxh.com": {
       "successCount": 0,
       "failureCount": 1
     },
