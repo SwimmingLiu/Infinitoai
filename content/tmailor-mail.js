@@ -1061,6 +1061,7 @@ async function waitForCloudflareConfirm(timeoutMs = DEFAULT_CLOUDFLARE_TIMEOUT_M
   const start = Date.now();
   const gracePeriodMs = Math.min(1500, timeoutMs);
   const delayedConfirmRetryMs = 6000;
+  const enabledConfirmTimeoutFallbackMs = 10000;
   const textFallbackGraceMs = 1800;
   const visualSuccessFallbackMs = 5000;
   const autoVerificationWaitMs = 12000;
@@ -1347,6 +1348,37 @@ async function waitForCloudflareConfirm(timeoutMs = DEFAULT_CLOUDFLARE_TIMEOUT_M
           confirmButton,
         });
         confirmAttemptCount += 1;
+        simulateClick(confirmButton);
+        await sleep(1200);
+        if (lastCheckboxSource) {
+          log(`TMailor: Cloudflare verification path: ${lastCheckboxSource}`, 'info');
+        }
+        return true;
+      }
+    }
+
+    if (
+      hasAttemptedCheckboxClick
+      && !hasVerificationCompletionSignal(responseTokenLength)
+      && firstCheckboxAttemptAt
+      && Date.now() - firstCheckboxAttemptAt >= enabledConfirmTimeoutFallbackMs
+      && checkboxAttemptCount <= 2
+      && confirmAttemptCount === 0
+    ) {
+      const confirmButton = findCloudflareConfirmButton();
+      if (confirmButton && !isElementDisabled(confirmButton)) {
+        log(
+          `TMailor: Cloudflare checkbox attempts have been running for ${enabledConfirmTimeoutFallbackMs}ms without a token, but Confirm is enabled. Trying Confirm as a fallback...`,
+          'warn'
+        );
+        logConfirmDecision('enabled-confirm-timeout-fallback', {
+          challengeTextVisible,
+          challengeShellVisible,
+          responseTokenLength,
+          confirmButton,
+        });
+        confirmAttemptCount += 1;
+        lastConfirmAttemptAt = Date.now();
         simulateClick(confirmButton);
         await sleep(1200);
         if (lastCheckboxSource) {

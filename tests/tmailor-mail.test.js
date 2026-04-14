@@ -1896,6 +1896,99 @@ test('tmailor does not click Confirm while the turnstile shell is still visible 
   );
 });
 
+test('tmailor clicks Confirm after 10 seconds of slow checkbox attempts when the challenge is still visible and Confirm stays enabled', async () => {
+  const context = createContext();
+  const state = context.__state;
+  let now = 0;
+  let challengeVisible = true;
+  context.Date = class extends Date {
+    static now() {
+      return now;
+    }
+  };
+
+  const turnstileContainer = {
+    tagName: 'DIV',
+    className: 'cf-turnstile h-[80px] flex items-center justify-center',
+    getBoundingClientRect() {
+      return { left: 360, top: 463, width: 300, height: 80 };
+    },
+  };
+
+  const confirmButton = {
+    id: 'btnNewEmailForm',
+    tagName: 'BUTTON',
+    textContent: 'Confirm',
+    disabled: false,
+    getAttribute(name) {
+      if (name === 'aria-disabled') {
+        return 'false';
+      }
+      return null;
+    },
+    getBoundingClientRect() {
+      return { left: 449, top: 555, width: 122, height: 41 };
+    },
+  };
+
+  context.document.body.innerText = '';
+  context.document.querySelector = (selector) => {
+    if (selector === '#btnNewEmailForm') {
+      return confirmButton;
+    }
+    if (selector === '.cf-turnstile' || selector.includes('.cf-turnstile') || selector.includes('.html-captcha')) {
+      return challengeVisible ? turnstileContainer : null;
+    }
+    if (selector.includes('input[name="cf-turnstile-response"]')) {
+      return { value: '' };
+    }
+    return null;
+  };
+  context.document.querySelectorAll = (selector) => {
+    if (selector === 'button, [role="button"], a, summary') {
+      return [confirmButton];
+    }
+    return [];
+  };
+  context.chrome.runtime.sendMessage = (message, callback) => {
+    state.runtimeMessages = state.runtimeMessages || [];
+    state.runtimeMessages.push(message);
+    if (message.type === 'DEBUGGER_CLICK_AT') {
+      now += 4500;
+    }
+    const response = { ok: true };
+    if (typeof callback === 'function') {
+      callback(response);
+    }
+    return Promise.resolve(response);
+  };
+  context.simulateClick = (target) => {
+    state.clicked += 1;
+    state.lastClicked = target;
+    if (target === confirmButton) {
+      challengeVisible = false;
+    }
+  };
+  context.sleep = async (ms = 0) => {
+    now += ms;
+  };
+
+  loadTmailorScript(context);
+  const hooks = context.__MULTIPAGE_TMAILOR_TEST_HOOKS;
+  assert.ok(hooks?.waitForCloudflareConfirm, 'expected tmailor to expose waitForCloudflareConfirm');
+
+  const handled = await hooks.waitForCloudflareConfirm(18000);
+
+  assert.equal(handled, true);
+  assert.ok(state.runtimeMessages?.some((entry) => entry.type === 'DEBUGGER_CLICK_AT'));
+  assert.equal(state.clicked, 1);
+  assert.equal(state.lastClicked?.id, 'btnNewEmailForm');
+  assert.ok(
+    state.logs.some((entry) => /Cloudflare confirm decision \(reason=enabled-confirm-timeout-fallback;/i.test(entry.message)),
+    'expected an enabled-confirm-timeout-fallback confirm decision log'
+  );
+});
+
 test('tmailor logs Cloudflare state snapshots and a timeout summary when verification never produces a token', async () => {
   const context = createContext();
   const state = context.__state;
