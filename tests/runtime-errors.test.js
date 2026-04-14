@@ -6,6 +6,7 @@ const {
   isMessageChannelClosedError,
   isReceivingEndMissingError,
   shouldRetryStep3WithFreshOauth,
+  shouldRetryStep8WithFreshOauth,
 } = require('../shared/runtime-errors.js');
 
 test('detects closed message-channel errors from async listeners', () => {
@@ -56,6 +57,17 @@ test('step 3 oauth timeout errors trigger a fresh oauth retry plan', () => {
   );
   assert.equal(
     shouldRetryStep3WithFreshOauth('Step 3 failed: Could not find email input field on signup page.'),
+    false
+  );
+});
+
+test('step 8 unexpected auth redirect errors trigger a fresh oauth retry plan', () => {
+  assert.equal(
+    shouldRetryStep8WithFreshOauth('Step 8 recoverable: auth flow landed on an unexpected page before localhost redirect (unexpected_auth_redirect). Refresh the VPS OAuth link and retry with the same email and password.'),
+    true
+  );
+  assert.equal(
+    shouldRetryStep8WithFreshOauth('Step 8 failed: Could not find "继续" button on OAuth consent page.'),
     false
   );
 });

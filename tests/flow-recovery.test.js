@@ -3,6 +3,7 @@ const assert = require('node:assert/strict');
 
 const {
   getMailTabOpenUrlForStep,
+  getStep6RecoveryReasonForUnexpectedAuthPage,
   isVpsAuthorizationNotPendingText,
 } = require('../shared/flow-recovery.js');
 
@@ -47,5 +48,49 @@ test('VPS verify ignores unrelated status text when checking not-pending auth er
   assert.equal(
     isVpsAuthorizationNotPendingText('502 Bad Gateway'),
     false
+  );
+});
+
+test('step 8 recovery detects when the auth flow lands on a non-localhost page', () => {
+  assert.equal(
+    getStep6RecoveryReasonForUnexpectedAuthPage({
+      currentUrl: 'https://status.openai.com/error?request_id=test',
+      currentPageText: 'OpenAI status incident',
+      expectedUrl: 'https://auth.openai.com/oauth/authorize?client_id=test',
+    }),
+    'unexpected_auth_redirect'
+  );
+});
+
+test('step 8 recovery detects transient auth server error pages before localhost', () => {
+  assert.equal(
+    getStep6RecoveryReasonForUnexpectedAuthPage({
+      currentUrl: 'https://auth.openai.com/oauth/authorize?client_id=test',
+      currentPageText: '502 Bad Gateway',
+      expectedUrl: 'https://auth.openai.com/oauth/authorize?client_id=test',
+    }),
+    'auth_server_error'
+  );
+});
+
+test('step 8 recovery ignores the expected localhost callback', () => {
+  assert.equal(
+    getStep6RecoveryReasonForUnexpectedAuthPage({
+      currentUrl: 'http://localhost:1455/auth/callback?code=test',
+      currentPageText: '',
+      expectedUrl: 'https://auth.openai.com/oauth/authorize?client_id=test',
+    }),
+    ''
+  );
+});
+
+test('step 8 recovery ignores normal OpenAI auth-domain pages before localhost', () => {
+  assert.equal(
+    getStep6RecoveryReasonForUnexpectedAuthPage({
+      currentUrl: 'https://auth.openai.com/u/login/identifier?state=test',
+      currentPageText: 'Continue to Codex',
+      expectedUrl: 'https://auth.openai.com/oauth/authorize?client_id=test',
+    }),
+    ''
   );
 });

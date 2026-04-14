@@ -33,11 +33,17 @@
     return /step 3 blocked: openai auth page timed out before credentials could be submitted/i.test(message);
   }
 
+  function shouldRetryStep8WithFreshOauth(error) {
+    const message = typeof error === 'string' ? error : error?.message || '';
+    return /step 8 recoverable: auth flow landed on an unexpected page before localhost redirect/i.test(message);
+  }
+
   return {
     buildMailPollRecoveryPlan,
     isMessageChannelClosedError,
     isReceivingEndMissingError,
     shouldRetryStep3WithFreshOauth,
+    shouldRetryStep8WithFreshOauth,
     shouldSkipStepResultLog,
   };
 });
