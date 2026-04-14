@@ -15,6 +15,8 @@ const displayStatus = document.getElementById('display-status');
 const statusBar = document.getElementById('status-bar');
 const inputEmail = document.getElementById('input-email');
 const inputPassword = document.getElementById('input-password');
+const btnCopyOauthUrl = document.getElementById('btn-copy-oauth-url');
+const btnCopyLocalhostUrl = document.getElementById('btn-copy-localhost-url');
 const btnCopyEmail = document.getElementById('btn-copy-email');
 const btnCopyPassword = document.getElementById('btn-copy-password');
 const btnFetchEmail = document.getElementById('btn-fetch-email');
@@ -103,7 +105,7 @@ const {
     com_only: '仅 .com / 白名单',
     whitelist_only: '仅白名单',
   };
-const { buildToastKey, canonicalizeToastMessage, getToastDuration } = ToastFeedback;
+const { buildToastKey, canonicalizeToastMessage, getToastDuration, shouldSuppressToastMessage } = ToastFeedback;
   let mailDomainSettingsState = createDefault33MailDomainSettings();
   let tmailorDomainState = normalizeTmailorDomainState();
   let tmailorApiStatusState = { ok: false, status: 'idle', message: 'TMailor API not checked yet.' };
@@ -184,6 +186,10 @@ const TOAST_ICONS = {
 };
 
 function showToast(message, type = 'error', duration, options = {}) {
+  if (shouldSuppressToastMessage(message, type)) {
+    return null;
+  }
+
   const resolvedDuration = getToastDuration(type, duration);
   const toastKey = buildToastKey(message, type);
   const existing = activeToasts.get(toastKey);
@@ -246,14 +252,8 @@ async function restoreState() {
   try {
     const state = await chrome.runtime.sendMessage({ type: 'GET_STATE', source: 'sidepanel' });
 
-    if (state.oauthUrl) {
-      displayOauthUrl.textContent = state.oauthUrl;
-      displayOauthUrl.classList.add('has-value');
-    }
-    if (state.localhostUrl) {
-      displayLocalhostUrl.textContent = state.localhostUrl;
-      displayLocalhostUrl.classList.add('has-value');
-    }
+    setDisplayValue(displayOauthUrl, state.oauthUrl);
+    setDisplayValue(displayLocalhostUrl, state.localhostUrl);
     if (state.email) {
       inputEmail.value = state.email;
     }
@@ -579,7 +579,23 @@ async function copyTextValue(value, successMessage) {
   }
 }
 
+function setDisplayValue(element, value, fallbackText = 'Waiting...') {
+  const nextValue = String(value || '').trim();
+  const hasValue = Boolean(nextValue);
+  element.classList.toggle('has-value', hasValue);
+  if ('value' in element) {
+    element.value = hasValue ? nextValue : '';
+    if ('placeholder' in element) {
+      element.placeholder = fallbackText;
+    }
+    return;
+  }
+  element.textContent = hasValue ? nextValue : fallbackText;
+}
+
 function renderStaticActionButtons() {
+  btnCopyOauthUrl.innerHTML = ACTION_ICONS.copy;
+  btnCopyLocalhostUrl.innerHTML = ACTION_ICONS.copy;
   btnCopyEmail.innerHTML = ACTION_ICONS.copy;
   btnCopyPassword.innerHTML = ACTION_ICONS.copy;
   renderTmailorApiCodeButton(false);
@@ -994,6 +1010,14 @@ if (btnTmailorApiCode) {
   });
 }
 
+btnCopyOauthUrl.addEventListener('click', async () => {
+  await copyFieldValue(displayOauthUrl, 'OAuth URL is empty', 'OAuth URL copied');
+});
+
+btnCopyLocalhostUrl.addEventListener('click', async () => {
+  await copyFieldValue(displayLocalhostUrl, 'Callback URL is empty', 'Callback URL copied');
+});
+
 btnCopyEmail.addEventListener('click', async () => {
   await copyFieldValue(inputEmail, 'Email is empty', 'Email copied');
 });
@@ -1034,10 +1058,8 @@ btnAutoRun.addEventListener('click', async () => {
 btnReset.addEventListener('click', async () => {
   if (confirm('Reset all steps and data?')) {
     await chrome.runtime.sendMessage({ type: 'RESET', source: 'sidepanel' });
-    displayOauthUrl.textContent = 'Waiting...';
-    displayOauthUrl.classList.remove('has-value');
-    displayLocalhostUrl.textContent = 'Waiting...';
-    displayLocalhostUrl.classList.remove('has-value');
+    setDisplayValue(displayOauthUrl, '');
+    setDisplayValue(displayLocalhostUrl, '');
     inputEmail.value = '';
     displayStatus.textContent = 'Ready';
     statusBar.className = 'status-bar';
@@ -1206,7 +1228,7 @@ chrome.runtime.onMessage.addListener((message) => {
   switch (message.type) {
     case 'LOG_ENTRY':
       appendLog(message.payload);
-      if (message.payload.level === 'error') {
+      if (message.payload.level === 'error' && !shouldSuppressToastMessage(message.payload.message, 'error')) {
         showToast(message.payload.message, 'error', undefined, { canonicalizeDisplay: true });
       }
       break;
@@ -1219,12 +1241,10 @@ chrome.runtime.onMessage.addListener((message) => {
         chrome.runtime.sendMessage({ type: 'GET_STATE', source: 'sidepanel' }).then(state => {
           syncPasswordField(state);
           if (state.oauthUrl) {
-            displayOauthUrl.textContent = state.oauthUrl;
-            displayOauthUrl.classList.add('has-value');
+            setDisplayValue(displayOauthUrl, state.oauthUrl);
           }
           if (state.localhostUrl) {
-            displayLocalhostUrl.textContent = state.localhostUrl;
-            displayLocalhostUrl.classList.add('has-value');
+            setDisplayValue(displayLocalhostUrl, state.localhostUrl);
           }
         });
       }
@@ -1233,10 +1253,8 @@ chrome.runtime.onMessage.addListener((message) => {
 
     case 'AUTO_RUN_RESET': {
       // Full UI reset for next run
-      displayOauthUrl.textContent = 'Waiting...';
-      displayOauthUrl.classList.remove('has-value');
-      displayLocalhostUrl.textContent = 'Waiting...';
-      displayLocalhostUrl.classList.remove('has-value');
+      setDisplayValue(displayOauthUrl, '');
+      setDisplayValue(displayLocalhostUrl, '');
       inputEmail.value = '';
       displayStatus.textContent = 'Ready';
       statusBar.className = 'status-bar';
@@ -1272,12 +1290,10 @@ chrome.runtime.onMessage.addListener((message) => {
         updateAutoRunStatsDisplay(message.payload.autoRunStats);
       }
       if (message.payload.oauthUrl) {
-        displayOauthUrl.textContent = message.payload.oauthUrl;
-        displayOauthUrl.classList.add('has-value');
+        setDisplayValue(displayOauthUrl, message.payload.oauthUrl);
       }
       if (message.payload.localhostUrl) {
-        displayLocalhostUrl.textContent = message.payload.localhostUrl;
-        displayLocalhostUrl.classList.add('has-value');
+        setDisplayValue(displayLocalhostUrl, message.payload.localhostUrl);
       }
       break;
     }

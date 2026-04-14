@@ -34,10 +34,24 @@
     return `${type}:${canonicalizeToastMessage(message)}`;
   }
 
+  function shouldSuppressToastMessage(message, type = 'info') {
+    if (type !== 'error' && type !== 'warn') {
+      return false;
+    }
+
+    const text = String(message || '').trim();
+    if (type === 'warn' && /^Stopping\.\.\.$/i.test(text)) {
+      return true;
+    }
+
+    return /the page keeping the extension port is moved into back\/forward cache, so the message channel is closed|message channel closed before a response was received|could not establish connection\.\s*receiving end does not exist/i.test(text);
+  }
+
   return {
     buildToastKey,
     canonicalizeToastMessage,
     getToastDuration,
+    shouldSuppressToastMessage,
     TOAST_DURATIONS,
   };
 });

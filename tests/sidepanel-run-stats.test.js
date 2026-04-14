@@ -47,15 +47,36 @@ test('buildRunSuccessDetailsHtml renders recent successful durations in descendi
     ],
   });
 
-  assert.match(html, /最近 20 次成功耗时/);
-  assert.match(html, /API/);
-  assert.match(html, /模拟操作/);
+  assert.match(html, /run-success-mode-card/);
+  assert.match(html, /API 平均/);
+  assert.match(html, /模拟操作 平均/);
+  assert.equal((html.match(/API/g) || []).length, 1);
+  assert.equal((html.match(/模拟操作/g) || []).length, 1);
   assert.match(html, /01:01/);
   assert.match(html, /00:48/);
   assert.match(html, /00:03/);
+  assert.match(html, /run-success-chip-list/);
+  assert.doesNotMatch(html, /run-success-mode-average/);
+  assert.doesNotMatch(html, /run-success-rank/);
 });
 
-test('buildRunStatsDetailsHtml renders grouped failure stats with recent logs', () => {
+test('buildRunSuccessDetailsHtml groups recent success durations by mode and keeps unknown entries in a recent card', () => {
+  const html = buildRunSuccessDetailsHtml({
+    recentSuccessDurationsMs: [61000, 55000, 48000, 3050],
+    recentSuccessEntries: [
+      { durationMs: 61000, mode: 'api' },
+      { durationMs: 55000, mode: 'api' },
+      { durationMs: 48000, mode: 'simulated' },
+      { durationMs: 3050, mode: 'unknown' },
+    ],
+  });
+
+  assert.match(html, /API 平均 00:58/);
+  assert.match(html, /模拟操作 平均 00:48/);
+  assert.match(html, /最近成功/);
+});
+
+test('buildRunStatsDetailsHtml renders grouped failure stats without nested recent-log sections', () => {
   const html = buildRunStatsDetailsHtml({
     successfulRuns: 1,
     failedRuns: 3,
@@ -89,12 +110,13 @@ test('buildRunStatsDetailsHtml renders grouped failure stats with recent logs', 
   assert.match(html, /Step 7/);
   assert.match(html, /Could not find verification code input/);
   assert.match(html, /2 次/);
-  assert.match(html, /最近日志/);
-  assert.match(html, /Run 8 failed/);
   assert.match(html, /Step 4/);
+  assert.match(html, /最近发生：8\/∞/);
+  assert.doesNotMatch(html, /最近日志/);
+  assert.doesNotMatch(html, /Run 8 failed/);
 });
 
-test('buildRunStatsDetailsHtml renders run-level failures as collapsible cards without Step question marks', () => {
+test('buildRunStatsDetailsHtml renders run-level failures as plain cards without Step question marks', () => {
   const html = buildRunStatsDetailsHtml({
     successfulRuns: 0,
     failedRuns: 2,
@@ -113,11 +135,11 @@ test('buildRunStatsDetailsHtml renders run-level failures as collapsible cards w
     ],
   });
 
-  assert.match(html, /<details class="run-failure-card"/);
+  assert.match(html, /<div class="run-failure-card">/);
   assert.match(html, /流程级/);
   assert.doesNotMatch(html, /Step \?/);
-  assert.match(html, /run-failure-summary/);
-  assert.match(html, /最近日志/);
+  assert.match(html, /run-failure-head/);
+  assert.doesNotMatch(html, /最近日志/);
 });
 
 test('normalizeDisplayedAutoRunStats keeps grouped failure buckets from auto-run status payloads', () => {

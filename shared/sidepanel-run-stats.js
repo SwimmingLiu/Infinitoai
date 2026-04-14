@@ -60,16 +60,6 @@
     return `<span class="run-stat-text failure">错误 ${normalizedStats.failedRuns}</span>`;
   }
 
-  function formatSuccessModeLabel(mode) {
-    if (mode === 'api') {
-      return 'API';
-    }
-    if (mode === 'simulated') {
-      return '模拟操作';
-    }
-    return '';
-  }
-
   function getRecentSuccessDisplayEntries(stats = {}) {
     const normalizedStats = normalizeAutoRunStats(stats);
     return normalizedStats.recentSuccessDurationsMs.map((durationMs, index) => ({
@@ -78,29 +68,84 @@
     }));
   }
 
+  function groupSuccessEntriesByMode(entries = []) {
+    const groups = {
+      api: [],
+      simulated: [],
+      unknown: [],
+    };
+
+    for (const entry of entries) {
+      const mode = entry?.mode === 'api' || entry?.mode === 'simulated' ? entry.mode : 'unknown';
+      groups[mode].push(entry);
+    }
+
+    return groups;
+  }
+
+  function buildSuccessModeCard(title, entries = [], cssSuffix = '') {
+    if (!entries.length) {
+      return '';
+    }
+
+    const totalDurationMs = entries.reduce((sum, entry) => sum + (Number(entry.durationMs) || 0), 0);
+    const averageDuration = formatRunStatsAverageDuration({
+      successfulRuns: entries.length,
+      totalSuccessfulDurationMs: totalDurationMs,
+    });
+
+    return `
+      <div class="run-success-mode-card${cssSuffix ? ` run-success-mode-card-${cssSuffix}` : ''}">
+        <div class="run-success-mode-head">
+          <span class="run-success-mode-title">${escapeHtml(title)} 平均 ${escapeHtml(averageDuration)}</span>
+        </div>
+        <div class="run-success-chip-list">
+          ${entries.map((entry) => `
+            <span class="run-success-chip">${escapeHtml(formatRunStatsAverageDuration({
+              successfulRuns: 1,
+              totalSuccessfulDurationMs: entry.durationMs,
+            }))}</span>
+          `).join('')}
+        </div>
+      </div>
+    `;
+  }
+
   function buildRunSuccessDetailsHtml(stats = {}) {
     const successEntries = getRecentSuccessDisplayEntries(stats);
     if (!successEntries.length) {
       return '<div class="run-success-empty">暂无成功记录</div>';
     }
 
+    const groupedEntries = groupSuccessEntriesByMode(successEntries);
+    const modeCards = [
+      buildSuccessModeCard('API', groupedEntries.api, 'api'),
+      buildSuccessModeCard('模拟操作', groupedEntries.simulated, 'simulated'),
+    ].filter(Boolean).join('');
+
+    const recentFallbackCard = groupedEntries.unknown.length
+      ? `
+        <div class="run-success-mode-card run-success-mode-card-recent">
+          <div class="run-success-mode-head">
+            <span class="run-success-mode-title">最近成功 ${groupedEntries.unknown.length} 条</span>
+          </div>
+          <div class="run-success-chip-list">
+            ${groupedEntries.unknown.map((entry) => `
+              <span class="run-success-chip">${escapeHtml(formatRunStatsAverageDuration({
+                successfulRuns: 1,
+                totalSuccessfulDurationMs: entry.durationMs,
+              }))}</span>
+            `).join('')}
+          </div>
+        </div>
+      `
+      : '';
+
     return `
       <div class="run-success-list-label">最近 20 次成功耗时</div>
-      <div class="run-success-list">
-        ${successEntries.map((entry, index) => `
-          <div class="run-success-item">
-            <span class="run-success-rank">#${index + 1}</span>
-            <div class="run-success-meta">
-              ${formatSuccessModeLabel(entry.mode)
-                ? `<span class="run-success-source run-success-source-${escapeHtml(entry.mode)}">${escapeHtml(formatSuccessModeLabel(entry.mode))}</span>`
-                : ''}
-              <span class="run-success-duration">${escapeHtml(formatRunStatsAverageDuration({
-              successfulRuns: 1,
-              totalSuccessfulDurationMs: entry.durationMs,
-            }))}</span>
-            </div>
-          </div>
-        `).join('')}
+      <div class="run-success-mode-grid">
+        ${modeCards}
+        ${recentFallbackCard}
       </div>
     `;
   }
@@ -113,29 +158,16 @@
 
     return buckets.map((bucket) => {
       const stepLabel = bucket.step > 0 ? `Step ${bucket.step}` : '流程级';
-      const recentLogsHtml = bucket.recentLogs.length
-        ? `
-          <div class="run-failure-logs-label">最近日志</div>
-          <div class="run-failure-logs">
-            ${bucket.recentLogs.map((entry) => `<div class="run-failure-log">${escapeHtml(entry)}</div>`).join('')}
-          </div>
-        `
-        : '';
 
       return `
-        <details class="run-failure-card">
-          <summary class="run-failure-summary">
-            <div class="run-failure-head">
-              <span class="run-failure-step">${escapeHtml(stepLabel)}</span>
-              <span class="run-failure-count">${bucket.count} 次</span>
-            </div>
-            <div class="run-failure-reason">${escapeHtml(bucket.reason)}</div>
-            <div class="run-failure-meta">最近发生：${escapeHtml(bucket.lastRunLabel || '未知轮次')}</div>
-          </summary>
-          <div class="run-failure-body">
-            ${recentLogsHtml}
+        <div class="run-failure-card">
+          <div class="run-failure-head">
+            <span class="run-failure-step">${escapeHtml(stepLabel)}</span>
+            <span class="run-failure-count">${bucket.count} 次</span>
           </div>
-        </details>
+          <div class="run-failure-reason">${escapeHtml(bucket.reason)}</div>
+          <div class="run-failure-meta">最近发生：${escapeHtml(bucket.lastRunLabel || '未知轮次')}</div>
+        </div>
       `;
     }).join('');
   }
