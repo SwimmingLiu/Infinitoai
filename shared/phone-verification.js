@@ -33,9 +33,25 @@
     return PHONE_VERIFICATION_PATTERNS.some((pattern) => pattern.test(normalized));
   }
 
-  function getPhoneVerificationBlockedMessage(step) {
+  function extractCurrentDomain(currentUrl) {
+    const normalized = normalizeText(currentUrl);
+    if (!normalized) {
+      return '';
+    }
+
+    try {
+      return new URL(normalized).hostname || '';
+    } catch {
+      const hostnameMatch = normalized.match(/^[a-z0-9.-]+\.[a-z]{2,}$/i);
+      return hostnameMatch ? hostnameMatch[0].toLowerCase() : '';
+    }
+  }
+
+  function getPhoneVerificationBlockedMessage(step, currentUrl) {
     if (Number(step) === 7) {
-      return 'Step 7 blocked: phone number is required on the auth page. Please change node and retry.';
+      const currentDomain = extractCurrentDomain(currentUrl);
+      const domainSuffix = currentDomain ? ` (domain: ${currentDomain})` : '';
+      return `Step 7 blocked: phone number is required on the auth page${domainSuffix}. Please change node and retry.`;
     }
     return `Step ${step} blocked: phone verification is required on the auth page.`;
   }

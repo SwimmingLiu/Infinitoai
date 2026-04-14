@@ -198,6 +198,39 @@ test('step 7 fails the round when email verification page has retry text but no 
   ]);
 });
 
+test('step 7 reports the current auth domain when phone verification is required before the code input appears', async () => {
+  const context = createContext({
+    href: 'https://accounts.openai.com/account/email-verification',
+    bodyText: 'Verify your phone number to continue',
+  });
+  context.PhoneVerification = require('../shared/phone-verification.js');
+  loadSignupPage(context);
+
+  const listener = context.__listeners[0];
+  assert.ok(listener, 'expected signup-page to register a runtime listener');
+
+  const response = await new Promise((resolve, reject) => {
+    const keepAlive = listener(
+      { type: 'FILL_CODE', step: 7, payload: { code: '123456' } },
+      {},
+      (result) => resolve(result)
+    );
+    assert.equal(keepAlive, true);
+    setTimeout(() => reject(new Error('timeout waiting for response')), 2000);
+  });
+
+  assert.equal(
+    response?.error,
+    'Step 7 blocked: phone number is required on the auth page (domain: accounts.openai.com). Please change node and retry.'
+  );
+  assert.deepEqual(context.__errors, [
+    {
+      step: 7,
+      message: response.error,
+    },
+  ]);
+});
+
 test('step 2 stops immediately and asks to change node when oauth page shows unsupported country or region', async () => {
   const context = createContext({
     href: 'https://auth.openai.com/api/oauth/authorize?client_id=test-client',
