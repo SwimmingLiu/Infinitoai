@@ -27,8 +27,10 @@
 - 手动点击某一步后，当前步成功会自动续跑后续步骤
 - 支持 `Stop` 中断等待、轮询和页面自动化
 - 支持有限轮次与无限轮次 `∞` 自动运行
+- 无限模式下，即使 run 进入 `PAUSED` 等待人工补充，也仍然受 watchdog 约束，超时后会自动判失败并进入下一轮
 - 自动记录成功 / 失败次数，并汇总失败原因
 - Console 日志、Toast 提示、状态条、步骤进度全部同步更新
+- Console 会保留最近 3 轮日志历史，可在面板中左右切换查看
 - Step 8 已是 `OAuth Auto Confirm`，会自动找“继续”按钮并通过 Chrome debugger 点击
 - Step 8 会监听 localhost 回调地址并自动写回 Side Panel
 - Step 5 同时兼容 `birthday` 页面和 `age` 页面
@@ -225,6 +227,8 @@ https://<your-inbucket-host>/m/<mailbox>/
 - `仅 .com / 白名单`
 - `仅白名单`
 
+当前默认模式是 `仅白名单`。
+
 ### `Auto / Stop / Reset`
 
 - `Auto`：按顺序执行完整流程
@@ -252,13 +256,16 @@ https://<your-inbucket-host>/m/<mailbox>/
 
 ### Step 2: Open Signup
 
-- 打开 OAuth 链接
-- 自动查找并点击 `Sign up / Register / 创建账户`
+- 固定从 `https://platform.openai.com/login` 进入，不再依赖 OAuth 链接直达注册页
+- 如果被重定向到已登录的 `platform.openai.com/home` / `chat`，会先自动尝试登出再回到登录页
+- 如果页面已经直接出现邮箱输入框，会直接进入下一步，不再强依赖 `Sign up / Register / 创建账户` 按钮
 
 ### Step 3: Fill Email / Password
 
-- 自动填写邮箱与密码
-- 支持邮箱页 / 密码页分离的流程
+- 自动填写邮箱
+- 若同页已经直接出现密码框，会先补密码再继续
+- 若页面出现“使用一次性验证码登录”，会切到一次性验证码注册流
+- 也兼容邮箱页 / 密码页分离的流程
 - 会把最终密码同步回面板
 - 若 `Source = TMailor`，还会先校验当前邮箱是否符合域名策略
 
@@ -276,7 +283,8 @@ https://<your-inbucket-host>/m/<mailbox>/
 
 ### Step 6: Login via OAuth
 
-- 重新打开 OAuth 链接执行登录
+- 先刷新最新 OAuth 链接，再重新打开 OAuth 登录链路
+- 登录页实际会落到 `auth.openai.com` 的邮箱页 / 密码页，脚本会分步填写
 - 如果页面上的 OAuth 链接比面板里保存的新，会自动改用页面最新链接
 - 支持密码流、OTP 流、自动跳转场景
 
@@ -469,6 +477,7 @@ Auto 会按顺序执行完整流程，并支持：
 - 运行状态条
 - 每步完成 / 失败状态
 - Console 实时日志
+- 最近 3 轮 Console 日志历史，以及左右切换按钮
 - 自动运行成功 / 失败计数
 - 失败原因聚合视图
 - Toast 提示
