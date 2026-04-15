@@ -4,12 +4,14 @@ importScripts('shared/email-addresses.js', 'shared/mail-provider-rotation.js', '
 
 const LOG_PREFIX = '[Infinitoai:bg]';
 const DUCK_AUTOFILL_URL = 'https://duckduckgo.com/email/settings/autofill';
-const OFFICIAL_SIGNUP_ENTRY_URL = 'https://auth.openai.com/create-account';
+const OFFICIAL_SIGNUP_ENTRY_URL = 'https://platform.openai.com/login';
 const STOP_ERROR_MESSAGE = 'Flow stopped by user.';
 const AUTO_RUN_HANDOFF_MESSAGE = 'Auto run handed off to manual continuation.';
 const HUMAN_STEP_DELAY_MIN = 700;
 const HUMAN_STEP_DELAY_MAX = 2200;
 const TMAILOR_API_CAPTCHA_COOLDOWN_MS = 3 * 60 * 1000;
+const MAX_LOG_ENTRIES_PER_ROUND = 500;
+const MAX_LOG_ROUNDS = 3;
 const { getStepDelayAfter, runStepSequence } = FlowRunner;
 const {
   buildMailPollRecoveryPlan,
@@ -30,9 +32,9 @@ const {
   shouldContinueAutoRunAfterWatchdog,
   shouldContinueAutoRunAfterError,
   shouldStartNextInfiniteRunAfterManualFlow,
+  shouldSuspendAutoRunWatchdogDuringPause,
   summarizeAutoRunResult,
 } = AutoRun;
-  shouldSuspendAutoRunWatchdogDuringPause,
 const {
   normalizeAutoRunStats,
   recordAutoRunFailure,
@@ -119,6 +121,83 @@ initializeSessionStorageAccess();
 
 let automationWindowId = null;
 
+function createLogRound(label = 'Current') {
+  return {
+    id: `log-round-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    label: String(label || 'Current'),
+    logs: [],
+  };
+}
+
+function buildInitialLogState(label = 'Current') {
+  const round = createLogRound(label);
+  return {
+    logs: [],
+    logRounds: [round],
+    currentLogRoundId: round.id,
+  };
+}
+
+function normalizeLogEntry(entry) {
+  if (!entry || typeof entry.message !== 'string') {
+    return null;
+  }
+
+  return {
+    message: entry.message,
+    level: typeof entry.level === 'string' ? entry.level : 'info',
+    timestamp: Number.isFinite(entry.timestamp) ? entry.timestamp : Date.now(),
+  };
+}
+
+function normalizeLogRound(round, index = 0) {
+  const logs = Array.isArray(round?.logs)
+    ? round.logs
+      .map(normalizeLogEntry)
+      .filter(Boolean)
+      .slice(-MAX_LOG_ENTRIES_PER_ROUND)
+    : [];
+
+  return {
+    id: typeof round?.id === 'string' && round.id ? round.id : `log-round-legacy-${index}`,
+    label: typeof round?.label === 'string' && round.label.trim() ? round.label.trim() : 'Current',
+    logs,
+  };
+}
+
+function getNormalizedLogHistory(state = {}) {
+  const fallbackLogs = Array.isArray(state.logs)
+    ? state.logs.map(normalizeLogEntry).filter(Boolean).slice(-MAX_LOG_ENTRIES_PER_ROUND)
+    : [];
+
+  let logRounds = Array.isArray(state.logRounds) && state.logRounds.length > 0
+    ? state.logRounds.map((round, index) => normalizeLogRound(round, index)).filter(Boolean)
+    : [];
+
+  if (!logRounds.length) {
+    const initial = createLogRound('Current');
+    initial.logs = fallbackLogs;
+    logRounds = [initial];
+  }
+
+  if (logRounds.length > MAX_LOG_ROUNDS) {
+    logRounds = logRounds.slice(-MAX_LOG_ROUNDS);
+  }
+
+  let currentLogRoundId = typeof state.currentLogRoundId === 'string' ? state.currentLogRoundId : '';
+  if (!logRounds.some((round) => round.id === currentLogRoundId)) {
+    currentLogRoundId = logRounds[logRounds.length - 1].id;
+  }
+
+  const currentRound = logRounds.find((round) => round.id === currentLogRoundId) || logRounds[logRounds.length - 1];
+
+  return {
+    logRounds,
+    currentLogRoundId,
+    logs: currentRound.logs.slice(),
+  };
+}
+
 async function ensureAutomationWindowId() {
   if (automationWindowId != null) {
     try {
@@ -164,7 +243,7 @@ const DEFAULT_STATE = {
   localhostUrl: null,
   flowStartTime: null,
   tabRegistry: {},
-  logs: [],
+  ...buildInitialLogState(),
   vpsUrl: '',
   customPassword: '',
   mailProvider: '163', // 'qq' or '163'
@@ -449,7 +528,8 @@ async function setPasswordState(password) {
   broadcastDataUpdate({ password });
 }
 
-async function resetState() {
+async function resetState(options = {}) {
+  const { preserveLogHistory = false } = options;
   console.log(LOG_PREFIX, 'Resetting all state');
   // Preserve settings and persistent data across resets
   const [prev, persistentBundle] = await Promise.all([
@@ -458,6 +538,9 @@ async function resetState() {
       'seenInbucketMailIds',
       'accounts',
       'tabRegistry',
+      'logs',
+      'logRounds',
+      'currentLogRoundId',
       'tmailorOutcomeRecorded',
       'mailProviderUsage',
       'customPassword',
@@ -465,10 +548,14 @@ async function resetState() {
     Promise.all([getPersistentSettings(), getPersistentTmailorDomainState(), getPersistentAutoRunStats()]),
   ]);
   const [persistentSettings, tmailorDomainState, autoRunStats] = persistentBundle;
+  const logHistoryState = preserveLogHistory
+    ? getNormalizedLogHistory(prev)
+    : buildInitialLogState();
   await chrome.storage.session.clear();
   await chrome.storage.session.set({
     ...DEFAULT_STATE,
     ...persistentSettings,
+    ...logHistoryState,
     tmailorDomainState,
     seenCodes: prev.seenCodes || [],
     seenInbucketMailIds: prev.seenInbucketMailIds || [],
@@ -690,9 +777,6 @@ function queueCommand(source, message, timeout = 15000) {
   });
 }
 
-function flushCommand(source, tabId) {
-  const pending = pendingCommands.get(source);
-  if (pending) {
 function sendContentScriptMessageWithTimeout(tabId, source, message, timeoutMs = 0) {
   const sendPromise = chrome.tabs.sendMessage(tabId, message);
   if (!(timeoutMs > 0)) {
@@ -714,6 +798,9 @@ function sendContentScriptMessageWithTimeout(tabId, source, message, timeoutMs =
   });
 }
 
+function flushCommand(source, tabId) {
+  const pending = pendingCommands.get(source);
+  if (pending) {
     clearTimeout(pending.timer);
     pendingCommands.delete(source);
     if (source === 'tmailor-mail') {
@@ -854,6 +941,44 @@ async function reuseOrCreateTab(source, url, options = {}) {
 
   // Create new tab in the automation window
   const wid = await ensureAutomationWindowId();
+  if (options.reuseActiveTabOnCreate) {
+    const reusableActiveTab = await findReusableActiveTabForSource(source, wid);
+    if (reusableActiveTab) {
+      await chrome.tabs.update(reusableActiveTab.id, { url, active: true });
+      console.log(LOG_PREFIX, `Reused active tab ${source} (${reusableActiveTab.id}) on create path`);
+
+      await new Promise((resolve) => {
+        const timer = setTimeout(() => { chrome.tabs.onUpdated.removeListener(listener); resolve(); }, 30000);
+        const listener = (tabId, info) => {
+          if (tabId === reusableActiveTab.id && info.status === 'complete') {
+            chrome.tabs.onUpdated.removeListener(listener);
+            clearTimeout(timer);
+            resolve();
+          }
+        };
+        chrome.tabs.onUpdated.addListener(listener);
+      });
+
+      if (options.inject) {
+        if (options.injectSource) {
+          await chrome.scripting.executeScript({
+            target: { tabId: reusableActiveTab.id },
+            func: (injectedSource) => {
+              window.__MULTIPAGE_SOURCE = injectedSource;
+            },
+            args: [options.injectSource],
+          });
+        }
+        await chrome.scripting.executeScript({
+          target: { tabId: reusableActiveTab.id },
+          files: options.inject,
+        });
+      }
+
+      return reusableActiveTab.id;
+    }
+  }
+
   const tab = await chrome.tabs.create({ url, active: true, windowId: wid });
   console.log(LOG_PREFIX, `Created new tab ${source} (${tab.id})`);
 
@@ -886,6 +1011,28 @@ async function reuseOrCreateTab(source, url, options = {}) {
   }
 
   return tab.id;
+}
+
+async function findReusableActiveTabForSource(source, windowId) {
+  const activeTabs = await chrome.tabs.query({ active: true, windowId });
+  const activeTab = activeTabs[0];
+  if (!Number.isFinite(activeTab?.id)) {
+    return null;
+  }
+
+  const activeUrl = String(activeTab.url || '').trim();
+  if (!/^https?:\/\//i.test(activeUrl)) {
+    return null;
+  }
+
+  const registry = await getTabRegistry();
+  for (const [registeredSource, entry] of Object.entries(registry || {})) {
+    if (entry?.tabId === activeTab.id && registeredSource !== source) {
+      return null;
+    }
+  }
+
+  return activeTab;
 }
 
 // ============================================================
@@ -981,16 +1128,81 @@ async function sendToContentScript(source, message) {
 // Logging
 // ============================================================
 
+function broadcastLogHistoryUpdate(logHistoryState) {
+  chrome.runtime.sendMessage({
+    type: 'LOG_HISTORY_UPDATED',
+    payload: {
+      logRounds: logHistoryState.logRounds,
+      currentLogRoundId: logHistoryState.currentLogRoundId,
+    },
+  }).catch(() => {});
+}
+
+async function startNewLogRound(label) {
+  const state = await getState();
+  const normalized = getNormalizedLogHistory(state);
+  let logRounds = normalized.logRounds.map((round) => ({
+    ...round,
+    logs: round.logs.slice(),
+  }));
+
+  const latestRound = logRounds[logRounds.length - 1];
+  if (latestRound && latestRound.id === normalized.currentLogRoundId && latestRound.logs.length === 0) {
+    latestRound.label = String(label || latestRound.label || 'Current');
+  } else {
+    const nextRound = createLogRound(label);
+    logRounds.push(nextRound);
+    if (logRounds.length > MAX_LOG_ROUNDS) {
+      logRounds = logRounds.slice(-MAX_LOG_ROUNDS);
+    }
+  }
+
+  const currentRound = logRounds[logRounds.length - 1];
+  const nextState = {
+    logRounds,
+    currentLogRoundId: currentRound.id,
+    logs: currentRound.logs.slice(),
+  };
+  await setState(nextState);
+  broadcastLogHistoryUpdate(nextState);
+  return nextState;
+}
+
+async function clearLogHistory() {
+  const nextState = buildInitialLogState();
+  await setState(nextState);
+  broadcastLogHistoryUpdate(nextState);
+  return nextState;
+}
+
 async function addLog(message, level = 'info') {
   const state = await getState();
-  const logs = state.logs || [];
   const entry = { message, level, timestamp: Date.now() };
-  logs.push(entry);
-  // Keep last 500 logs
-  if (logs.length > 500) logs.splice(0, logs.length - 500);
-  await setState({ logs });
+  const normalized = getNormalizedLogHistory(state);
+  const logRounds = normalized.logRounds.map((round) => ({
+    ...round,
+    logs: round.logs.slice(),
+  }));
+  const currentRound = logRounds.find((round) => round.id === normalized.currentLogRoundId) || logRounds[logRounds.length - 1];
+
+  currentRound.logs.push(entry);
+  if (currentRound.logs.length > MAX_LOG_ENTRIES_PER_ROUND) {
+    currentRound.logs.splice(0, currentRound.logs.length - MAX_LOG_ENTRIES_PER_ROUND);
+  }
+
+  await setState({
+    logRounds,
+    currentLogRoundId: currentRound.id,
+    logs: currentRound.logs.slice(),
+  });
   // Broadcast to side panel
-  chrome.runtime.sendMessage({ type: 'LOG_ENTRY', payload: entry }).catch(() => {});
+  chrome.runtime.sendMessage({
+    type: 'LOG_ENTRY',
+    payload: {
+      roundId: currentRound.id,
+      entry,
+    },
+  }).catch(() => {});
   touchAutoRunWatchdog(entry);
 }
 
@@ -1206,7 +1418,18 @@ async function handleMessage(message, sender) {
     }
 
     case 'GET_STATE': {
-      return await getState();
+      const state = await getState();
+      const logHistoryState = getNormalizedLogHistory(state);
+      if (
+        !Array.isArray(state.logRounds)
+        || state.currentLogRoundId !== logHistoryState.currentLogRoundId
+      ) {
+        await setState(logHistoryState);
+      }
+      return {
+        ...state,
+        ...logHistoryState,
+      };
     }
 
     case 'RESET': {
@@ -1214,6 +1437,14 @@ async function handleMessage(message, sender) {
       await resetState();
       await addLog('Flow reset', 'info');
       return { ok: true };
+    }
+
+    case 'CLEAR_LOG_HISTORY': {
+      const nextState = await clearLogHistory();
+      return {
+        ok: true,
+        ...nextState,
+      };
     }
 
     case 'EXECUTE_STEP': {
@@ -1726,6 +1957,7 @@ async function executeStep(step) {
   } catch (err) {
     const latestState = await getState();
     const currentStepStatus = latestState?.stepStatuses?.[step];
+    const displayedError = decorateAuthFailureWithEmailDomain(err.message, latestState?.email);
     if (isStopError(err)) {
       if (!shouldSkipStepResultLog(currentStepStatus)) {
         await setStepStatus(step, 'stopped');
@@ -1735,7 +1967,6 @@ async function executeStep(step) {
     }
     if (!shouldSkipStepResultLog(currentStepStatus)) {
       await setStepStatus(step, 'failed');
-    const displayedError = decorateAuthFailureWithEmailDomain(err.message, latestState?.email);
       await addLog(`Step ${step} failed: ${displayedError}`, 'error');
     }
     throw new Error(displayedError);
@@ -2246,6 +2477,7 @@ async function autoRunLoop(totalRuns, infiniteMode = false, options = {}) {
 
   for (let run = startingRun; autoRunInfinite || run <= totalRuns; run++) {
     autoRunCurrentRun = run;
+    const runTargetText = autoRunInfinite ? `${run}/∞` : `${run}/${totalRuns}`;
 
     // Reset everything at the start of each run (keep VPS/mail settings)
     let prevState = await getState();
@@ -2313,17 +2545,17 @@ async function autoRunLoop(totalRuns, infiniteMode = false, options = {}) {
       mailProviderUsage: pruneMailProviderUsage(prevState.mailProviderUsage),
       autoRunning: true,
     };
-    await resetState();
+    await resetState({ preserveLogHistory: true });
     await setState(keepSettings);
+    await startNewLogRound(`Run ${runTargetText}`);
     // Tell side panel to reset all UI
     chrome.runtime.sendMessage({ type: 'AUTO_RUN_RESET' }).catch(() => {});
     await sleepWithStop(500);
 
-    const runTargetText = autoRunInfinite ? `${run}/∞` : `${run}/${totalRuns}`;
     const runStartedAt = Date.now();
     autoRunCurrentRunStartedAt = runStartedAt;
     resetAutoRunCurrentSuccessMode();
-      await addLog(`=== Auto Run ${runTargetText} — Phase 1: Open official signup ===`, 'info');
+      await addLog(`=== Auto Run ${runTargetText} — Phase 1: Open platform login page ===`, 'info');
 
     try {
       throwIfStopped();
@@ -2333,6 +2565,7 @@ async function autoRunLoop(totalRuns, infiniteMode = false, options = {}) {
 
       const currentState = await getState();
       const emailSource = getCurrentEmailSource(currentState);
+      await addLog(`=== Run ${runTargetText} — Phase 2: Refresh ${getEmailSourceLabel(emailSource)}, then return to fill the platform email field ===`, 'info');
       let emailReady = false;
       try {
         const nextEmail = await fetchEmailAddress({ generateNew: true });
@@ -2374,7 +2607,7 @@ async function autoRunLoop(totalRuns, infiniteMode = false, options = {}) {
         }
       }
 
-      await addLog(`=== Run ${runTargetText} — Phase 2: Register, verify, login, complete ===`, 'info');
+      await addLog(`=== Run ${runTargetText} — Phase 3: Request code, verify, login, complete ===`, 'info');
       sendAutoRunStatus('running', { currentRun: run });
 
       const signupTabId = await getTabId('signup-page');
@@ -2539,23 +2772,37 @@ async function executeStep1(state) {
 }
 
 // ============================================================
-// Step 2: Open Signup Page (Background opens the official signup entry, signup-page.js continues if needed)
+// Step 2: Open Signup Page (Background opens the platform login entry, signup-page.js continues if needed)
 // ============================================================
 
 async function executeStep2(state) {
-  await addLog(`Step 2: Opening official signup page...`);
-  await reuseOrCreateTab('signup-page', OFFICIAL_SIGNUP_ENTRY_URL);
-
-  await sendToContentScript('signup-page', {
-    type: 'EXECUTE_STEP',
-    step: 2,
-    source: 'background',
-    payload: {},
+  await addLog(`Step 2: Opening platform login page...`);
+  await reuseOrCreateTab('signup-page', OFFICIAL_SIGNUP_ENTRY_URL, {
+    reuseActiveTabOnCreate: true,
   });
+
+  try {
+    await sendToContentScript('signup-page', {
+      type: 'EXECUTE_STEP',
+      step: 2,
+      source: 'background',
+      payload: {},
+    });
+  } catch (err) {
+    const errorMessage = err?.message || String(err || '');
+    if (isMessageChannelClosedError(errorMessage) || isReceivingEndMissingError(errorMessage)) {
+      await addLog(
+        'Step 2: Signup page navigated before the step-2 response returned. Continuing to wait for completion signal...',
+        'warn'
+      );
+      return;
+    }
+    throw err;
+  }
 }
 
 // ============================================================
-// Step 3: Fill Email & Password (via signup-page.js)
+// Step 3: Fill Email and request the signup one-time code (via signup-page.js)
 // ============================================================
 
 async function executeStep3(state) {
@@ -2592,9 +2839,7 @@ async function executeStep3(state) {
     await setState({ accounts });
   }
 
-  await addLog(
-    `Step 3: Filling email ${email}, password ${state.customPassword ? 'customized' : 'generated'} (${password.length} chars)`
-  );
+  await addLog(`Step 3: Filling email ${email}, clicking Continue, and requesting a one-time verification code...`);
   await sendToContentScript('signup-page', {
     type: 'EXECUTE_STEP',
     step: 3,

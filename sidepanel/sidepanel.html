@@ -259,12 +259,12 @@
       </div>
       <div class="step-row" data-step="2">
         <div class="step-indicator" data-step="2"><span class="step-num">2</span></div>
-        <button class="step-btn" data-step="2">Open Signup</button>
+        <button class="step-btn" data-step="2">Open Platform Login</button>
         <span class="step-status" data-step="2"></span>
       </div>
       <div class="step-row" data-step="3">
         <div class="step-indicator" data-step="3"><span class="step-num">3</span></div>
-        <button class="step-btn" data-step="3">Fill Email / Password</button>
+        <button class="step-btn" data-step="3">Fill Email / Continue</button>
         <span class="step-status" data-step="3"></span>
       </div>
       <div class="step-row" data-step="4">
@@ -303,7 +303,12 @@
   <section id="log-section">
     <div class="log-header">
       <span class="section-label">Console</span>
-      <button id="btn-clear-log" class="btn btn-ghost btn-xs" title="Clear log">Clear</button>
+      <div class="log-controls">
+        <button id="btn-clear-log" class="btn btn-ghost btn-xs" title="Clear log">Clear</button>
+        <button id="btn-log-round-prev" class="btn btn-ghost btn-xs" type="button" title="Previous round" aria-label="Previous round">&lt;</button>
+        <span id="display-log-round" class="log-round-label">Current</span>
+        <button id="btn-log-round-next" class="btn btn-ghost btn-xs" type="button" title="Next round" aria-label="Next round">&gt;</button>
+      </div>
     </div>
     <div class="log-panel">
       <div id="log-area"></div>

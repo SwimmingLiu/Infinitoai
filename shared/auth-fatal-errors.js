@@ -49,7 +49,7 @@
   }
 
   function getAuthOperationTimedOutMessage(step) {
-    return `Step ${step} blocked: OpenAI auth page timed out before credentials could be submitted. Reopen the official signup page and retry with the same email and password.`;
+    return `Step ${step} blocked: OpenAI auth page timed out before credentials could be submitted. Reopen the platform login page and retry with the same email and password.`;
   }
 
   function isAuthFatalErrorText(text) {

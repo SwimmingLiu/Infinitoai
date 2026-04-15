@@ -28,6 +28,9 @@ const btnAutoRun = document.getElementById('btn-auto-run');
 const autoContinueBar = document.getElementById('auto-continue-bar');
 const autoContinueHint = document.getElementById('auto-continue-hint');
 const btnClearLog = document.getElementById('btn-clear-log');
+const btnLogRoundPrev = document.getElementById('btn-log-round-prev');
+const btnLogRoundNext = document.getElementById('btn-log-round-next');
+const displayLogRound = document.getElementById('display-log-round');
 const btnLogScrollBottom = document.getElementById('btn-log-scroll-bottom');
 const inputVpsUrl = document.getElementById('input-vps-url');
 const btnToggleVpsUrl = document.getElementById('btn-toggle-vps-url');
@@ -111,6 +114,9 @@ const { buildToastKey, canonicalizeToastMessage, getToastDuration, shouldSuppres
   let tmailorApiStatusState = { ok: false, status: 'idle', message: 'TMailor API not checked yet.' };
   let autoRunPhaseState = 'idle';
   let keepLogPinnedToBottom = true;
+  let logRoundsState = [];
+  let selectedLogRoundId = '';
+  let followLatestLogRound = true;
   renderTmailorModeOptions();
 
 const ACTION_ICONS = {
@@ -248,6 +254,144 @@ function dismissToast(toast) {
 // State Restore on load
 // ============================================================
 
+function normalizeLogRounds(rounds = [], fallbackLogs = []) {
+  const normalizedRounds = Array.isArray(rounds) && rounds.length > 0
+    ? rounds.map((round, index) => ({
+      id: typeof round?.id === 'string' && round.id ? round.id : `log-round-${index + 1}`,
+      label: typeof round?.label === 'string' && round.label.trim() ? round.label.trim() : 'Current',
+      logs: Array.isArray(round?.logs) ? round.logs.slice() : [],
+    }))
+    : [];
+
+  if (normalizedRounds.length > 0) {
+    return normalizedRounds;
+  }
+
+  return [{
+    id: 'log-round-current',
+    label: 'Current',
+    logs: Array.isArray(fallbackLogs) ? fallbackLogs.slice() : [],
+  }];
+}
+
+function getSelectedLogRoundIndex() {
+  const index = logRoundsState.findIndex((round) => round.id === selectedLogRoundId);
+  return index >= 0 ? index : Math.max(0, logRoundsState.length - 1);
+}
+
+function getSelectedLogRound() {
+  if (!logRoundsState.length) {
+    return null;
+  }
+
+  return logRoundsState[getSelectedLogRoundIndex()] || logRoundsState[logRoundsState.length - 1];
+}
+
+function getLatestLogRound() {
+  return logRoundsState[logRoundsState.length - 1] || null;
+}
+
+function updateLogRoundControls() {
+  const selectedIndex = getSelectedLogRoundIndex();
+  const selectedRound = getSelectedLogRound();
+  const roundCount = logRoundsState.length;
+
+  if (btnLogRoundPrev) {
+    btnLogRoundPrev.disabled = roundCount <= 1 || selectedIndex <= 0;
+  }
+  if (btnLogRoundNext) {
+    btnLogRoundNext.disabled = roundCount <= 1 || selectedIndex >= roundCount - 1;
+  }
+  if (displayLogRound) {
+    const label = selectedRound?.label || 'Current';
+    displayLogRound.textContent = roundCount > 0 ? `${label} (${selectedIndex + 1}/${roundCount})` : 'Current';
+  }
+}
+
+function renderSelectedLogRound() {
+  clearLogArea();
+  const round = getSelectedLogRound();
+  if (round) {
+    for (const entry of round.logs) {
+      appendLog(entry);
+    }
+  }
+  scrollLogToBottom(true);
+  updateLogRoundControls();
+}
+
+function setLogHistory(rounds, currentLogRoundId) {
+  const previousSelectedLogRoundId = selectedLogRoundId;
+  const normalizedRounds = normalizeLogRounds(rounds);
+  const latestRound = normalizedRounds[normalizedRounds.length - 1] || null;
+  const preferredCurrentRoundId = normalizedRounds.some((round) => round.id === currentLogRoundId)
+    ? currentLogRoundId
+    : latestRound?.id || '';
+
+  logRoundsState = normalizedRounds;
+
+  if (!followLatestLogRound && previousSelectedLogRoundId && normalizedRounds.some((round) => round.id === previousSelectedLogRoundId)) {
+    selectedLogRoundId = previousSelectedLogRoundId;
+  } else {
+    selectedLogRoundId = preferredCurrentRoundId || latestRound?.id || '';
+  }
+
+  followLatestLogRound = selectedLogRoundId === (latestRound?.id || '');
+  renderSelectedLogRound();
+}
+
+async function refreshLogHistoryFromBackground() {
+  try {
+    const state = await chrome.runtime.sendMessage({ type: 'GET_STATE', source: 'sidepanel' });
+    if (state.logRounds) {
+      setLogHistory(state.logRounds, state.currentLogRoundId);
+    } else if (state.logs) {
+      setLogHistory([{
+        id: 'log-round-current',
+        label: 'Current',
+        logs: state.logs,
+      }], 'log-round-current');
+    }
+  } catch (err) {
+    console.error('Failed to refresh log history:', err);
+  }
+}
+
+function handleIncomingLogEntry(payload) {
+  const entry = payload?.entry || payload;
+  if (!entry || typeof entry.message !== 'string') {
+    return;
+  }
+
+  const latestRound = getLatestLogRound();
+  const roundId = payload?.roundId || latestRound?.id || 'log-round-current';
+  let round = logRoundsState.find((candidate) => candidate.id === roundId);
+
+  if (!round) {
+    const fallbackRounds = logRoundsState.slice(-2);
+    round = {
+      id: roundId,
+      label: latestRound?.label || 'Current',
+      logs: [],
+    };
+    logRoundsState = [...fallbackRounds, round];
+  }
+
+  round.logs.push(entry);
+  if (round.logs.length > 500) {
+    round.logs.splice(0, round.logs.length - 500);
+  }
+
+  const newestRound = getLatestLogRound();
+  if (selectedLogRoundId === roundId) {
+    appendLog(entry);
+  } else {
+    updateLogRoundControls();
+  }
+
+  followLatestLogRound = selectedLogRoundId === (newestRound?.id || '');
+}
+
 async function restoreState() {
   try {
     const state = await chrome.runtime.sendMessage({ type: 'GET_STATE', source: 'sidepanel' });
@@ -284,10 +428,14 @@ async function restoreState() {
       }
     }
 
-    if (state.logs) {
-      for (const entry of state.logs) {
-        appendLog(entry);
-      }
+    if (state.logRounds) {
+      setLogHistory(state.logRounds, state.currentLogRoundId);
+    } else if (state.logs) {
+      setLogHistory([{
+        id: 'log-round-current',
+        label: 'Current',
+        logs: state.logs,
+      }], 'log-round-current');
     }
 
     updateAutoRunStatsDisplay(state.autoRunStats);
@@ -855,7 +1003,8 @@ async function pasteAndValidateTmailorEmail() {
   renderFetchButton(true);
 
   try {
-    const inputText = inputEmail.value.trim();
+    inputEmail.value = '';
+    const inputText = '';
     let clipboardText = '';
     let clipboardReadDenied = false;
     if (!inputText) {
@@ -866,7 +1015,7 @@ async function pasteAndValidateTmailorEmail() {
       }
     }
 
-    const picked = pickTmailorCandidate(inputText, clipboardText);
+    const picked = pickTmailorCandidate(inputText, clipboardText, { preferClipboard: true });
     const candidate = picked.candidate;
     const validation = validateTmailorEmail(tmailorDomainState, candidate);
 
@@ -1061,9 +1210,10 @@ btnReset.addEventListener('click', async () => {
     setDisplayValue(displayOauthUrl, '');
     setDisplayValue(displayLocalhostUrl, '');
     inputEmail.value = '';
+    inputPassword.value = '';
     displayStatus.textContent = 'Ready';
     statusBar.className = 'status-bar';
-    clearLogArea();
+    await refreshLogHistoryFromBackground();
     document.querySelectorAll('.step-row').forEach(row => row.className = 'step-row');
     document.querySelectorAll('.step-status').forEach(el => el.textContent = '');
     btnAutoRun.disabled = false;
@@ -1078,9 +1228,39 @@ btnReset.addEventListener('click', async () => {
 });
 
 // Clear log
-btnClearLog.addEventListener('click', () => {
+btnClearLog.addEventListener('click', async () => {
+  const response = await chrome.runtime.sendMessage({ type: 'CLEAR_LOG_HISTORY', source: 'sidepanel' });
+  if (response?.logRounds) {
+    followLatestLogRound = true;
+    setLogHistory(response.logRounds, response.currentLogRoundId);
+    return;
+  }
   clearLogArea();
 });
+
+if (btnLogRoundPrev) {
+  btnLogRoundPrev.addEventListener('click', () => {
+    const currentIndex = getSelectedLogRoundIndex();
+    if (currentIndex <= 0) {
+      return;
+    }
+    selectedLogRoundId = logRoundsState[currentIndex - 1].id;
+    followLatestLogRound = selectedLogRoundId === (getLatestLogRound()?.id || '');
+    renderSelectedLogRound();
+  });
+}
+
+if (btnLogRoundNext) {
+  btnLogRoundNext.addEventListener('click', () => {
+    const currentIndex = getSelectedLogRoundIndex();
+    if (currentIndex >= logRoundsState.length - 1) {
+      return;
+    }
+    selectedLogRoundId = logRoundsState[currentIndex + 1].id;
+    followLatestLogRound = selectedLogRoundId === (getLatestLogRound()?.id || '');
+    renderSelectedLogRound();
+  });
+}
 
 logArea.addEventListener('scroll', () => {
   keepLogPinnedToBottom = isLogNearBottom(getLogScrollMetrics());
@@ -1227,10 +1407,16 @@ inputInbucketHost.addEventListener('change', async () => {
 chrome.runtime.onMessage.addListener((message) => {
   switch (message.type) {
     case 'LOG_ENTRY':
-      appendLog(message.payload);
-      if (message.payload.level === 'error' && !shouldSuppressToastMessage(message.payload.message, 'error')) {
+      handleIncomingLogEntry(message.payload);
+      if (message.payload?.entry?.level === 'error' && !shouldSuppressToastMessage(message.payload.entry.message, 'error')) {
+        showToast(message.payload.entry.message, 'error', undefined, { canonicalizeDisplay: true });
+      } else if (message.payload?.level === 'error' && !shouldSuppressToastMessage(message.payload.message, 'error')) {
         showToast(message.payload.message, 'error', undefined, { canonicalizeDisplay: true });
       }
+      break;
+
+    case 'LOG_HISTORY_UPDATED':
+      setLogHistory(message.payload?.logRounds || [], message.payload?.currentLogRoundId || '');
       break;
 
     case 'STEP_STATUS_CHANGED': {
@@ -1256,9 +1442,10 @@ chrome.runtime.onMessage.addListener((message) => {
       setDisplayValue(displayOauthUrl, '');
       setDisplayValue(displayLocalhostUrl, '');
       inputEmail.value = '';
+      inputPassword.value = '';
       displayStatus.textContent = 'Ready';
       statusBar.className = 'status-bar';
-      clearLogArea();
+      refreshLogHistoryFromBackground();
       document.querySelectorAll('.step-row').forEach(row => row.className = 'step-row');
       document.querySelectorAll('.step-status').forEach(el => el.textContent = '');
       updateStopButtonState(false);

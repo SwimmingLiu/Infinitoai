@@ -1129,6 +1129,20 @@ header {
   margin-bottom: 6px;
 }
 
+.log-controls {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.log-round-label {
+  min-width: 96px;
+  text-align: center;
+  font-size: 11px;
+  color: var(--text-muted);
+  font-family: 'JetBrains Mono', 'Consolas', monospace;
+}
+
 .log-panel {
   position: relative;
 }

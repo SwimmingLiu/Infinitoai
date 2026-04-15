@@ -3,6 +3,7 @@ const assert = require('node:assert/strict');
 
 const {
   buildReclaimableTabRegistry,
+  detectReclaimableSource,
   normalizeOrigin,
   normalizeComparableUrl,
   shouldPrepareSameUrlTabForReuse,
@@ -111,5 +112,16 @@ test('same-url reuse reclaims tabs whose content script readiness was lost', () 
       { inject: ['content/tmailor-mail.js'] }
     ),
     false
+  );
+});
+
+test('detectReclaimableSource recognizes platform login and chat pages as signup-page tabs', () => {
+  assert.equal(
+    detectReclaimableSource('https://platform.openai.com/login', {}),
+    'signup-page'
+  );
+  assert.equal(
+    detectReclaimableSource('https://platform.openai.com/chat', {}),
+    'signup-page'
   );
 });

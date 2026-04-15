@@ -70,6 +70,29 @@ test('utils content script can be evaluated twice safely', () => {
   assert.equal(context.__listeners.length, 1);
 });
 
+test('utils reports platform login pages as signup-page', () => {
+  const sentMessages = [];
+  const context = createBaseContext({
+    location: { href: 'https://platform.openai.com/login' },
+    chrome: {
+      runtime: {
+        onMessage: {
+          addListener() {},
+        },
+        sendMessage(message) {
+          sentMessages.push(message);
+        },
+      },
+    },
+  });
+
+  assert.doesNotThrow(() => runScriptTwice('content/utils.js', context));
+  assert.equal(
+    sentMessages.some((message) => message?.type === 'CONTENT_SCRIPT_READY' && message?.source === 'signup-page'),
+    true
+  );
+});
+
 test('signup-page content script can be evaluated twice safely', () => {
   const context = createBaseContext({
     VerificationCode: { isVerificationCodeRejectedText() { return false; } },

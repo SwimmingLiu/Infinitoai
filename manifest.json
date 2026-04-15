@@ -36,6 +36,7 @@
     },
     {
       "matches": [
+        "https://platform.openai.com/*",
         "https://auth0.openai.com/*",
         "https://auth.openai.com/*",
         "https://accounts.openai.com/*"

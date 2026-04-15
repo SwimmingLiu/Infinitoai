@@ -168,6 +168,10 @@
     }
 
     const run = Math.max(0, Number.parseInt(String(currentRun ?? 0).trim(), 10) || 0);
+    const total = Math.max(0, Number.parseInt(String(totalRuns ?? 0).trim(), 10) || 0);
+    return run < total;
+  }
+
   function shouldSuspendAutoRunWatchdogDuringPause({
     phase = '',
     infiniteMode = false,
@@ -177,10 +181,6 @@
       return !Boolean(infiniteMode);
     }
     return true;
-  }
-
-    const total = Math.max(0, Number.parseInt(String(totalRuns ?? 0).trim(), 10) || 0);
-    return run < total;
   }
 
   function buildAutoRunStatusPayload({
@@ -346,8 +346,8 @@
     isAutoRunLogSilenceError,
     shouldContinueAutoRunAfterWatchdog,
     shouldStartNextInfiniteRunAfterManualFlow,
+    shouldSuspendAutoRunWatchdogDuringPause,
     shouldContinueAutoRunAfterError,
     summarizeAutoRunResult,
   };
 });
-    shouldSuspendAutoRunWatchdogDuringPause,

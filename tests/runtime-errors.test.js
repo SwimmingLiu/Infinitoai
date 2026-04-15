@@ -52,7 +52,7 @@ test('mail poll recovery plan ignores unrelated mailbox errors', () => {
 
 test('step 3 oauth timeout errors trigger a fresh oauth retry plan', () => {
   assert.equal(
-    shouldRetryStep3WithFreshOauth('Step 3 blocked: OpenAI auth page timed out before credentials could be submitted. Reopen the official signup page and retry with the same email and password.'),
+    shouldRetryStep3WithFreshOauth('Step 3 blocked: OpenAI auth page timed out before credentials could be submitted. Reopen the platform login page and retry with the same email and password.'),
     true
   );
   assert.equal(
