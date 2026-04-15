@@ -402,6 +402,53 @@ test('step 2 treats the dedicated #login-email field as a direct-entry login for
   ]);
 });
 
+test('step 2 re-checks for the direct credential form before failing when no register button is found', async () => {
+  const emailInput = {
+    getBoundingClientRect() {
+      return { width: 200, height: 44 };
+    },
+  };
+  const context = createContext({
+    href: 'https://platform.openai.com/login',
+    bodyText: 'Build on the OpenAI API Platform',
+    waitForElementByTextImpl() {
+      return Promise.reject(new Error('missing'));
+    },
+    waitForElementImpl() {
+      return Promise.reject(new Error('missing'));
+    },
+    querySelectorAllImpl(selector) {
+      if (selector === 'input#login-email') {
+        return [emailInput];
+      }
+      return [];
+    },
+  });
+  loadSignupPage(context);
+
+  const listener = context.__listeners[0];
+  assert.ok(listener, 'expected signup-page to register a runtime listener');
+
+  const response = await new Promise((resolve, reject) => {
+    const keepAlive = listener(
+      { type: 'EXECUTE_STEP', step: 2, payload: {} },
+      {},
+      (result) => resolve(result)
+    );
+    assert.equal(keepAlive, true);
+    setTimeout(() => reject(new Error('timeout waiting for response')), 2000);
+  });
+
+  assert.equal(response?.ok, true);
+  assert.deepEqual(context.__errors, []);
+  assert.deepEqual(context.__completions, [
+    {
+      step: 2,
+      payload: undefined,
+    },
+  ]);
+});
+
 test('step 3 submits the email first and then switches to passwordless login when the OTP button appears', async () => {
   const state = {
     stage: 'email',
@@ -1541,6 +1588,7 @@ test('step 6 fails instead of completing when the login page shows incorrect ema
   const emailInput = createVisibleElement();
   const passwordInput = createVisibleElement();
   const submitButton = createVisibleElement();
+  const logs = [];
 
   const context = createContext({
     href: 'https://auth.openai.com/u/login/password',
@@ -1566,6 +1614,9 @@ test('step 6 fails instead of completing when the login page shows incorrect ema
   });
 
   context.fillInput = () => {};
+  context.log = (message) => {
+    logs.push(String(message || ''));
+  };
   context.simulateClick = () => {
     state.submitCount += 1;
     if (state.submitCount === 2) {
@@ -1590,6 +1641,10 @@ test('step 6 fails instead of completing when the login page shows incorrect ema
   });
 
   assert.match(response?.error || '', /incorrect email address or password/i);
+  assert.ok(
+    logs.includes('Step 6: Password filled: wrong-pass'),
+    `expected password log, got ${JSON.stringify(logs)}`
+  );
   assert.deepEqual(context.__completions, []);
   assert.deepEqual(context.__errors, [
     {
@@ -1597,6 +1652,81 @@ test('step 6 fails instead of completing when the login page shows incorrect ema
       message: response.error,
     },
   ]);
+});
+
+test('step 6 logs a detailed fatal auth snapshot before failing after login submit', async () => {
+  const state = {
+    bodyText: '输入密码',
+    passwordVisible: true,
+    submitCount: 0,
+  };
+
+  const createVisibleElement = () => ({
+    getBoundingClientRect() {
+      return { width: 120, height: 40 };
+    },
+  });
+
+  const emailInput = createVisibleElement();
+  const passwordInput = createVisibleElement();
+  const submitButton = createVisibleElement();
+  const logs = [];
+
+  const context = createContext({
+    href: 'https://auth.openai.com/u/login/password',
+    bodyText: state.bodyText,
+    waitForElementImpl(selector) {
+      if (selector.includes('type=\"email\"') || selector.includes('name=\"email\"')) {
+        return Promise.resolve(emailInput);
+      }
+      return Promise.reject(new Error(`missing: ${selector}`));
+    },
+    querySelectorImpl(selector) {
+      if (selector === 'button[type=\"submit\"]') {
+        return submitButton;
+      }
+      return null;
+    },
+    querySelectorAllImpl(selector) {
+      if (selector === 'input[type=\"password\"]' && state.passwordVisible) {
+        return [passwordInput];
+      }
+      return [];
+    },
+  });
+  context.AuthFatalErrors = AuthFatalErrors;
+  context.log = (message) => {
+    logs.push(String(message || ''));
+  };
+  context.fillInput = () => {};
+  context.simulateClick = () => {
+    state.submitCount += 1;
+    if (state.submitCount === 2) {
+      state.bodyText = 'Oops, something went wrong. Something went wrong during verification. Please try again.';
+      context.document.body.innerText = state.bodyText;
+    }
+  };
+
+  loadSignupPage(context);
+
+  const listener = context.__listeners[0];
+  assert.ok(listener, 'expected signup-page to register a runtime listener');
+
+  const response = await new Promise((resolve, reject) => {
+    const keepAlive = listener(
+      { type: 'EXECUTE_STEP', step: 6, payload: { email: 'demo@example.com', password: 'fatal-pass' } },
+      {},
+      (result) => resolve(result)
+    );
+    assert.equal(keepAlive, true);
+    setTimeout(() => reject(new Error('timeout waiting for response')), 3000);
+  });
+
+  assert.equal(response?.error, 'Auth fatal error page detected after login submit.');
+  assert.ok(
+    logs.some((entry) => /Step 6: Fatal auth state after login submit\./i.test(entry) && /Oops, something went wrong/i.test(entry)),
+    `expected fatal auth snapshot log, got ${JSON.stringify(logs)}`
+  );
 });
 
 

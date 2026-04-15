@@ -263,6 +263,19 @@ function normalizePlatformMenuText(value) {
   return String(value || '').replace(/\s+/g, ' ').trim();
 }
 
+function summarizeVisibleTextForLog(value, maxLength = 180) {
+  const normalized = String(value || '').replace(/\s+/g, ' ').trim();
+  if (!normalized) {
+    return '';
+  }
+
+  if (normalized.length <= maxLength) {
+    return normalized;
+  }
+
+  return `${normalized.slice(0, Math.max(1, maxLength - 3))}...`;
+}
+
 function isExactPlatformLogoutText(value) {
   return /^(?:log\s*out|退出登录|退出)$/i.test(normalizePlatformMenuText(value));
 }
@@ -836,6 +849,7 @@ async function step6_login(payload) {
     log('Step 6: Password field found, filling password...');
     await humanPause(550, 1450);
     fillInput(passwordInput, password);
+    log(`Step 6: Password filled: ${password}`);
 
     await sleep(500);
     const submitBtn2 = document.querySelector('button[type="submit"]')
@@ -908,7 +922,7 @@ async function submitStep3WithPassword(payload, passwordInput) {
   if (!payload.password) throw new Error('No password provided. Step 3 requires a generated password.');
   await humanPause(600, 1500);
   fillInput(passwordInput, payload.password);
-  log('Step 3: Password filled');
+  log(`Step 3: Password filled: ${payload.password}`);
 
   await sleep(500);
   const passwordSubmitBtn = document.querySelector('button[type="submit"]')
@@ -1006,6 +1020,10 @@ async function waitForLoginSubmissionOutcome(timeout = 12000) {
 
     const visibleText = getVisiblePageText();
     if (isAuthFatalErrorText(visibleText)) {
+      log(
+        `Step 6: Fatal auth state after login submit. URL: ${location.href}; Visible text snapshot: ${summarizeVisibleTextForLog(visibleText) || '(empty)'}`,
+        'warn'
+      );
       throw new Error('Auth fatal error page detected after login submit.');
     }
     if (isLoginCredentialErrorText(visibleText)) {
