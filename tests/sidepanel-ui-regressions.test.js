@@ -47,8 +47,10 @@ test('side panel exposes log round navigation controls without a clear button', 
   const source = readSidepanelSource();
 
   assert.doesNotMatch(html, /id="btn-clear-log"/);
+  assert.match(html, /id="btn-copy-log-round"/);
   assert.match(html, /id="btn-log-round-next"/);
   assert.match(html, /id="display-log-round"/);
+  assert.match(source, /const btnCopyLogRound = document\.getElementById\('btn-copy-log-round'\);/);
   assert.doesNotMatch(source, /btnClearLog/);
 });
 
