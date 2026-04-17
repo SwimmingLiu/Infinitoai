@@ -8,6 +8,7 @@ const AuthFatalErrors = require('../shared/auth-fatal-errors.js');
 function createContext({
   href = 'https://auth.openai.com/email-verification',
   bodyText = '',
+  DateImpl = Date,
   waitForElementImpl,
   waitForElementByTextImpl,
   querySelectorImpl,
@@ -115,7 +116,7 @@ function createContext({
     InputEvent: StubEvent,
     setTimeout,
     clearTimeout,
-    Date,
+    Date: DateImpl,
     getComputedStyle() {
       return {
         display: 'block',
@@ -482,6 +483,108 @@ test('step 2 still accepts the platform login email form when recovery prefers a
   const response = await new Promise((resolve, reject) => {
     const keepAlive = listener(
       { type: 'EXECUTE_STEP', step: 2, payload: { preferSignupEntry: true } },
+      {},
+      (result) => resolve(result)
+    );
+    assert.equal(keepAlive, true);
+    setTimeout(() => reject(new Error('timeout waiting for response')), 2000);
+  });
+
+  assert.equal(response?.ok, true);
+  assert.deepEqual(context.__errors, []);
+  assert.deepEqual(context.__completions, [
+    {
+      step: 2,
+      payload: undefined,
+    },
+  ]);
+});
+
+test('step 2 logs out from platform home when the account menu is already available there', async () => {
+  let fakeNow = 0;
+  class FakeDate extends Date {
+    static now() {
+      fakeNow += 2500;
+      return fakeNow;
+    }
+  }
+
+  let menuOpen = false;
+  let loggedOut = false;
+
+  const emailInput = {
+    getBoundingClientRect() {
+      return { width: 180, height: 42 };
+    },
+  };
+  const accountMenuButton = {
+    className: '',
+    getAttribute(name) {
+      if (name === 'aria-haspopup') return 'menu';
+      if (name === 'aria-expanded') return menuOpen ? 'true' : 'false';
+      if (name === 'data-state') return menuOpen ? 'open' : 'closed';
+      return null;
+    },
+    querySelector() {
+      return null;
+    },
+    getBoundingClientRect() {
+      return { width: 40, height: 40 };
+    },
+    dispatchEvent() {},
+    focus() {},
+  };
+  const logoutLabel = {
+    className: 'wU7SW',
+    textContent: 'Log out',
+    getBoundingClientRect() {
+      return { width: 120, height: 32 };
+    },
+    dispatchEvent() {},
+    focus() {},
+    closest() {
+      return this;
+    },
+  };
+
+  const context = createContext({
+    href: 'https://platform.openai.com/home',
+    bodyText: 'OpenAI Platform',
+    DateImpl: FakeDate,
+    querySelectorAllImpl(selector) {
+      if (selector === 'input[type="email"]') {
+        return loggedOut ? [emailInput] : [];
+      }
+      if (selector === 'button[aria-haspopup="menu"]'
+        || selector === 'button[id^="radix-"][aria-haspopup="menu"]'
+        || selector === 'button[id^="radix-"]') {
+        return loggedOut ? [] : [accountMenuButton];
+      }
+      if (selector === 'button, [role="menuitem"], [role="button"], a, div, span') {
+        return loggedOut ? [] : (menuOpen ? [logoutLabel] : [accountMenuButton]);
+      }
+      return [];
+    },
+  });
+  context.simulateClick = (target) => {
+    if (target === accountMenuButton) {
+      menuOpen = true;
+      return;
+    }
+    if (target === logoutLabel) {
+      menuOpen = false;
+      loggedOut = true;
+      context.location.href = 'https://platform.openai.com/login';
+    }
+  };
+  loadSignupPage(context);
+
+  const listener = context.__listeners[0];
+  assert.ok(listener, 'expected signup-page to register a runtime listener');
+
+  const response = await new Promise((resolve, reject) => {
+    const keepAlive = listener(
+      { type: 'EXECUTE_STEP', step: 2, payload: {} },
       {},
       (result) => resolve(result)
     );

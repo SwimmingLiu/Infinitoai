@@ -240,6 +240,21 @@ function isPlatformSigningBridgeState(text = getVisiblePageText()) {
     || isPlatformSigningInStateText(text);
 }
 
+function hasPlatformLoggedInShellControls() {
+  return Boolean(
+    findPlatformAccountMenuButton()
+    || findPlatformResponsiveShellMenuButton()
+  );
+}
+
+function isPlatformLoggedInShellPage() {
+  if (isPlatformChatSessionPage()) {
+    return true;
+  }
+
+  return isPlatformHomeRedirectPage() && hasPlatformLoggedInShellControls();
+}
+
 async function waitForPlatformEntryStateToSettle(timeout = 8000) {
   if (!(isPlatformLoginEntryPage() || isPlatformHomeRedirectPage() || isPlatformChatSessionPage() || isPlatformAuthCallbackPage() || isAuthReturnHomeIssueText(getVisiblePageText()))) {
     return null;
@@ -259,6 +274,10 @@ async function waitForPlatformEntryStateToSettle(timeout = 8000) {
       sawPlatformRedirect = true;
       waitingForIssueRecovery = false;
       continue;
+    }
+
+    if (isPlatformLoggedInShellPage()) {
+      return 'logged-in-shell';
     }
 
     if (isPlatformChatSessionPage()) {
@@ -284,8 +303,8 @@ async function waitForPlatformEntryStateToSettle(timeout = 8000) {
     await sleep(250);
   }
 
-  if (isPlatformChatSessionPage()) {
-    return 'chat';
+  if (isPlatformLoggedInShellPage()) {
+    return 'logged-in-shell';
   }
 
   if (isDirectSignupFormVisible()) {
@@ -337,11 +356,15 @@ async function recoverPlatformEntryFromAuthIssueIfNeeded(visibleText = getVisibl
 }
 
 async function logoutFromPlatformChatSessionIfNeeded() {
-  if (!isPlatformChatSessionPage()) {
+  if (!isPlatformLoggedInShellPage()) {
     return false;
   }
 
-  log('第 2 步：Platform 登录入口误入已登录会话，先执行登出。', 'warn');
+  if (isPlatformHomeRedirectPage() && !isPlatformChatSessionPage()) {
+    log('第 2 步：Platform 已停在 home 且检测到头像菜单，按已登录页面处理，先执行登出。', 'warn');
+  } else {
+    log('第 2 步：Platform 登录入口误入已登录会话，先执行登出。', 'warn');
+  }
 
   const accountMenuButton = await ensurePlatformAccountMenuButtonVisible(10000);
 
@@ -609,14 +632,14 @@ async function clickPlatformLogoutAction(logoutLabel) {
   simulateClick(target);
 
   await sleep(200);
-  if (!isPlatformChatSessionPage()) {
+  if (!isPlatformLoggedInShellPage()) {
     return true;
   }
 
   log('第 2 步：登出菜单首次点击后没有跳走，改用底层指针点击重试。', 'warn');
   dispatchPointerClickSequence(target);
   await sleep(250);
-  return !isPlatformChatSessionPage();
+  return !isPlatformLoggedInShellPage();
 }
 
 async function waitForPlatformLogoutRedirect(timeout = 15000) {
@@ -1204,9 +1227,7 @@ function hasVisibleOauthConsentContinueButton(text = getVisiblePageText()) {
 function hasStableNextPageAfterProfileSubmit(text = getVisiblePageText()) {
   return isStablePostProfileLandingUrl()
     || hasVisibleOauthConsentContinueButton(text)
-    || Boolean(getPageOauthUrl())
-    || hasVisibleCredentialInput()
-    || hasReadyVerificationPage(text);
+    || Boolean(getPageOauthUrl());
 }
 
 function getAuthPageState() {
@@ -1294,11 +1315,24 @@ function hasVisibleProfileFormInput() {
 
 const STEP5_PROFILE_SUBMIT_OUTCOME_TIMEOUT_MS = 12000;
 const STEP5_POST_SUBMIT_SETTLE_TIMEOUT_MS = 12000;
+const STEP5_STABLE_URL_POLL_INTERVAL_MS = 1000;
+
+function getStableStep5LandingOutcome() {
+  if (!isStablePostProfileLandingUrl()) {
+    return null;
+  }
+
+  return {
+    accepted: true,
+    reason: 'stable-landing-url',
+  };
+}
 
 async function waitForProfileSubmissionOutcome(step, timeout = STEP5_PROFILE_SUBMIT_OUTCOME_TIMEOUT_MS) {
   const startUrl = location.href;
   const start = Date.now();
   let nonProfileStateSince = 0;
+  let lastStableUrlPollAt = 0;
 
   while (Date.now() - start < timeout) {
     throwIfStopped();
@@ -1313,7 +1347,15 @@ async function waitForProfileSubmissionOutcome(step, timeout = STEP5_PROFILE_SUB
       throw new Error('Auth fatal error page detected after profile submit.');
     }
 
-    if (location.href !== startUrl) {
+    if (Date.now() - lastStableUrlPollAt >= STEP5_STABLE_URL_POLL_INTERVAL_MS) {
+      lastStableUrlPollAt = Date.now();
+      const stableLandingOutcome = getStableStep5LandingOutcome();
+      if (stableLandingOutcome) {
+        return stableLandingOutcome;
+      }
+    }
+
+    if (location.href !== startUrl && !isCanonicalAboutYouPage(location.href)) {
       return {
         accepted: true,
         reason: 'url-changed',
@@ -1415,6 +1457,7 @@ async function waitForProfileSubmitButtonOrOutcome(step, timeout = 5000) {
 
 async function waitForPostProfileBlockingSettle(step, startUrl = location.href, timeout = STEP5_POST_SUBMIT_SETTLE_TIMEOUT_MS) {
   const start = Date.now();
+  let lastStableUrlPollAt = 0;
 
   while (Date.now() - start < timeout) {
     throwIfStopped();
@@ -1425,6 +1468,12 @@ async function waitForPostProfileBlockingSettle(step, startUrl = location.href, 
     }
     if (isBlockingAuthFatalError(visibleText)) {
       throw new Error('Auth fatal error page detected after profile submit.');
+    }
+    if (Date.now() - lastStableUrlPollAt >= STEP5_STABLE_URL_POLL_INTERVAL_MS) {
+      lastStableUrlPollAt = Date.now();
+      if (getStableStep5LandingOutcome()) {
+        return;
+      }
     }
     if (location.href !== startUrl) {
       return;

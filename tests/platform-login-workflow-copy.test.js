@@ -180,6 +180,32 @@ test('platform chat logout recovery forces the flow back to the platform login e
   );
 });
 
+test('step 2 treats platform home as a logout-capable logged-in shell instead of waiting forever on the signing bridge', () => {
+  const signupSource = readProjectFile(path.join('content', 'signup-page.js'));
+
+  assert.match(
+    signupSource,
+    /function isPlatformLoggedInShellPage\(\) \{[\s\S]*isPlatformChatSessionPage\(\)[\s\S]*isPlatformHomeRedirectPage\(\)/i
+  );
+  assert.match(
+    signupSource,
+    /async function logoutFromPlatformChatSessionIfNeeded\(\) \{[\s\S]*if \(!isPlatformLoggedInShellPage\(\)\) \{[\s\S]*return false;[\s\S]*\}/i
+  );
+});
+
+test('tmailor success accounting falls back to the active lease email before reading the domain stats key', () => {
+  const backgroundSource = readProjectFile('background.js');
+
+  assert.match(
+    backgroundSource,
+    /function getTmailorOutcomeEmail\(state\)[\s\S]*getActiveTmailorEmailLease\(state\)[\s\S]*leaseEmail[\s\S]*state\.email/i
+  );
+  assert.match(
+    backgroundSource,
+    /const outcomeEmail = getTmailorOutcomeEmail\(state\);[\s\S]*const domain = extractEmailDomain\(outcomeEmail\);/i
+  );
+});
+
 test('step 2 retries once by reopening the platform login page after non-navigation errors', () => {
   const backgroundSource = readProjectFile('background.js');
 
@@ -684,6 +710,27 @@ test('step 5 cautiously fast-paths a stable about-you profile form only after re
   assert.match(
     backgroundSource,
     /consecutiveProfileShortcutSignals >= 2[\s\S]*return \{ \.\.\.state,\s*\.\.\.pageState \};/i
+  );
+});
+
+test('step 5 content submit outcome polls the stable welcome-create url once per second before falling back to broader next-page heuristics', () => {
+  const signupSource = readProjectFile(path.join('content', 'signup-page.js'));
+
+  assert.match(
+    signupSource,
+    /const STEP5_STABLE_URL_POLL_INTERVAL_MS = 1000;/i
+  );
+  assert.match(
+    signupSource,
+    /function getStableStep5LandingOutcome\(\) \{[\s\S]*isStablePostProfileLandingUrl\(\)[\s\S]*reason:\s*'stable-landing-url'/i
+  );
+  assert.match(
+    signupSource,
+    /async function waitForProfileSubmissionOutcome\(step,\s*timeout = STEP5_PROFILE_SUBMIT_OUTCOME_TIMEOUT_MS\) \{[\s\S]*let lastStableUrlPollAt = 0;[\s\S]*if \(Date\.now\(\) - lastStableUrlPollAt >= STEP5_STABLE_URL_POLL_INTERVAL_MS\) \{[\s\S]*const stableLandingOutcome = getStableStep5LandingOutcome\(\);[\s\S]*if \(stableLandingOutcome\) \{[\s\S]*return stableLandingOutcome;[\s\S]*\}[\s\S]*\}[\s\S]*if \(hasStableNextPageAfterProfileSubmit\(visibleText\)\)/i
+  );
+  assert.doesNotMatch(
+    signupSource,
+    /function hasStableNextPageAfterProfileSubmit\(text = getVisiblePageText\(\)\) \{[\s\S]*hasReadyVerificationPage\(text\)/i
   );
 });
 
