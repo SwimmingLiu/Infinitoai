@@ -41,9 +41,9 @@
 
   function getPhoneVerificationBlockedMessage(step) {
     if (Number(step) === 7) {
-      return 'Step 7 blocked: phone number is required on the auth page. Please change node and retry.';
+      return '第 7 步被拦截：当前 auth 页面要求手机号验证，请切换节点后重试。';
     }
-    return `Step ${step} blocked: phone verification is required on the auth page.`;
+    return `第 ${step} 步被拦截：当前 auth 页面要求手机号验证。`;
   }
 
   return {

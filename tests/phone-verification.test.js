@@ -33,6 +33,6 @@ test('does not flag unrelated OAuth consent text', () => {
 test('step 7 phone verification message suggests changing node', () => {
   assert.equal(
     getPhoneVerificationBlockedMessage(7),
-    'Step 7 blocked: phone number is required on the auth page. Please change node and retry.'
+    '第 7 步被拦截：当前 auth 页面要求手机号验证，请切换节点后重试。'
   );
 });
