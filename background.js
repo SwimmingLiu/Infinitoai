@@ -1122,7 +1122,7 @@ async function sendToContentScript(source, message) {
     }
 
     console.warn(LOG_PREFIX, `${source} content script disconnected, attempting reinjection:`, errorMessage);
-    await addLog(`${source} content script disconnected, reinjecting and retrying...`, 'warn');
+    await addLog(`${source} 内容脚本已断开，正在重新注入并重试...`, 'warn');
     throwIfStopped();
 
     const nextRegistry = { ...registry };
@@ -1206,9 +1206,103 @@ async function clearLogHistory() {
   return nextState;
 }
 
+function appendDebugDetail(userMessage, debugMessage) {
+  const normalizedUserMessage = String(userMessage || '').trim();
+  const normalizedDebugMessage = String(debugMessage || '').trim();
+  if (!normalizedUserMessage) {
+    return normalizedDebugMessage;
+  }
+  if (!normalizedDebugMessage || normalizedDebugMessage === normalizedUserMessage || /调试：/i.test(normalizedUserMessage)) {
+    return normalizedUserMessage;
+  }
+  return `${normalizedUserMessage} | 调试：${normalizedDebugMessage}`;
+}
+
+function getFriendlyWarnErrorMessage(message, level = 'info') {
+  const text = String(message || '').trim();
+  if (!text || (level !== 'warn' && level !== 'error')) {
+    return text;
+  }
+
+  const mappings = [
+    {
+      pattern: /signup auth page is temporarily unreachable\. waiting for the verification page to become responsive before polling the inbox/i,
+      userMessage: '当前 auth 页面暂时无法访问，先等待验证页恢复响应后再查收邮件。',
+    },
+    {
+      pattern: /signup auth page timed out before the verification email step\. refreshing the vps oauth link and replaying step 3/i,
+      userMessage: '当前 auth 页面在进入邮箱验证码阶段前超时，准备刷新 VPS OAuth 链接并重试第 3 步。',
+    },
+    {
+      pattern: /step \d+ blocked: signup auth page stayed unreachable before the verification email step\./i,
+      userMessage: '注册验证页长时间无法访问，本轮无法继续查收邮箱验证码。',
+    },
+    {
+      pattern: /step \d+ blocked: signup page never advanced past the credential form, so the verification email was probably not sent\./i,
+      userMessage: '注册页长时间停留在邮箱或密码表单，系统判断验证码邮件大概率还没有发出。',
+    },
+    {
+      pattern: /step \d+ blocked: email domain is unsupported on the auth page/i,
+      userMessage: '当前邮箱域名暂不受支持，已加入黑名单，请切换新邮箱后重试。',
+    },
+    {
+      pattern: /step \d+ blocked: auth page requires phone verification before the verification email step\./i,
+      userMessage: '当前 auth 页面要求先完成手机号验证，暂时无法继续邮箱验证码流程。',
+    },
+    {
+      pattern: /step \d+ blocked: auth page requires phone verification before profile completion\./i,
+      userMessage: '当前 auth 页面要求先完成手机号验证，暂时无法继续填写资料。',
+    },
+    {
+      pattern: /step 5 blocked: auth page did not become reachable again after profile submit\./i,
+      userMessage: '资料提交后 auth 页面一直没有恢复响应，本轮无法确认是否提交成功。',
+    },
+    {
+      pattern: /step 5 blocked: profile submit did not reach a stable next page\./i,
+      userMessage: '资料提交后没有进入稳定的下一页，系统先按未成功处理。',
+    },
+    {
+      pattern: /auth fatal error page detected after profile submit\./i,
+      userMessage: '资料提交后出现 auth 致命错误页，本轮已停止。',
+    },
+    {
+      pattern: /step 5: signup page navigated before the step-5 response returned\. continuing to wait for completion signal/i,
+      userMessage: '第 5 步页面跳转过快，先继续等待完成信号。',
+    },
+    {
+      pattern: /step 5: auth page already advanced beyond the profile form after the navigation interrupt\./i,
+      userMessage: '第 5 步页面已经越过资料表单，后台改为直接按成功收口。',
+    },
+    {
+      pattern: /step \d+: signup page command stalled on the current verification page\. trying to fill the current verification form with the same code before reloading/i,
+      userMessage: '当前验证码页响应偏慢，先尝试在原页面直接补填同一份验证码。',
+    },
+    {
+      pattern: /step \d+: current verification page rejected the code\. returning to inbox polling/i,
+      userMessage: '当前验证码已被页面拒绝，返回邮箱继续查找最新验证码。',
+    },
+    {
+      pattern: /step \d+: the current verification page kept the form visible after a direct same-page retry/i,
+      userMessage: '当前验证码页重试后仍未推进，准备刷新当前页面再试一次。',
+    },
+  ];
+
+  for (const { pattern, userMessage } of mappings) {
+    if (pattern.test(text)) {
+      return appendDebugDetail(userMessage, text);
+    }
+  }
+
+  return text;
+}
+
 async function addLog(message, level = 'info') {
   const state = await getState();
-  const entry = { message, level, timestamp: Date.now() };
+  const entry = {
+    message: getFriendlyWarnErrorMessage(message, level),
+    level,
+    timestamp: Date.now(),
+  };
   const normalized = getNormalizedLogHistory(state);
   const logRounds = normalized.logRounds.map((round) => ({
     ...round,
@@ -1479,7 +1573,7 @@ async function handleMessage(message, sender) {
       if (tabId && message.source) {
         await registerTab(message.source, tabId);
         flushCommand(message.source, tabId);
-        await addLog(`Content script ready: ${message.source} (tab ${tabId})`);
+        await addLog(`内容脚本已就绪：${message.source}（标签页 ${tabId}）`);
       }
       return { ok: true };
     }
@@ -1509,13 +1603,13 @@ async function handleMessage(message, sender) {
         const latestState = await getState();
         const displayedError = decorateAuthFailureWithEmailDomain(err.message, latestState?.email);
         await setStepStatus(message.step, 'failed');
-        await addLog(`Step ${message.step} failed: ${displayedError}`, 'error');
+        await addLog(`第 ${message.step} 步失败：${displayedError}`, 'error');
         await recordTmailorOutcome('failure', { step: message.step, errorMessage: displayedError });
         notifyStepError(message.step, displayedError);
         return { ok: false, error: displayedError };
       }
       await setStepStatus(message.step, 'completed');
-      await addLog(`Step ${message.step} completed`, 'ok');
+      await addLog(`第 ${message.step} 步已完成`, 'ok');
       await handleStepData(message.step, message.payload);
       notifyStepComplete(message.step, message.payload);
       return { ok: true };
@@ -1524,13 +1618,13 @@ async function handleMessage(message, sender) {
     case 'STEP_ERROR': {
       if (isStopError(message.error)) {
         await setStepStatus(message.step, 'stopped');
-        await addLog(`Step ${message.step} stopped by user`, 'warn');
+        await addLog(`第 ${message.step} 步已由用户停止`, 'warn');
         notifyStepError(message.step, message.error);
       } else {
         const currentState = await getState();
         const displayedError = decorateAuthFailureWithEmailDomain(message.error, currentState?.email);
         await setStepStatus(message.step, 'failed');
-        await addLog(`Step ${message.step} failed: ${displayedError}`, 'error');
+        await addLog(`第 ${message.step} 步失败：${displayedError}`, 'error');
         await recordTmailorOutcome('failure', { step: message.step, errorMessage: displayedError });
         notifyStepError(message.step, displayedError);
       }
@@ -1555,7 +1649,7 @@ async function handleMessage(message, sender) {
     case 'RESET': {
       clearStopRequest();
       await resetState();
-      await addLog('Flow reset', 'info');
+      await addLog('流程已重置', 'info');
       return { ok: true };
     }
 
@@ -1583,7 +1677,7 @@ async function handleMessage(message, sender) {
         if (isStopError(err) || isAutoRunHandoffError(err)) {
           return;
         }
-        await addLog(`Manual continuation failed: ${err.message}`, 'error');
+        await addLog(`手动续跑失败：${err.message}`, 'error');
       });
       return { ok: true };
     }
@@ -1750,7 +1844,7 @@ async function handleMessage(message, sender) {
         );
         return { ok: true, code: result.code, step: fetchConfig.step, email: state.email };
       } catch (err) {
-        await addLog(`Manual TMailor API code fetch failed: ${err.message}`, 'warn');
+        await addLog(`手动获取 TMailor 验证码失败：${err.message}`, 'warn');
         return { error: err.message };
       }
     }
@@ -1915,12 +2009,12 @@ async function handOffPausedAutoRunToManual(step) {
 
 async function runManualFlow(startStep) {
   if (manualRunActive) {
-    await addLog('Manual continuation already in progress', 'warn');
+    await addLog('手动续跑已在进行中，请勿重复启动。', 'warn');
     return;
   }
 
   if (autoRunActive && !resumeWaiter) {
-    await addLog('Cannot start manual continuation while auto run is active', 'warn');
+    await addLog('自动运行仍在进行中，暂时不能启动手动续跑。', 'warn');
     return;
   }
 
@@ -1936,7 +2030,7 @@ async function runManualFlow(startStep) {
       startStep,
       executeStepAndWait,
     });
-    await addLog('Manual continuation completed through step 9', 'ok');
+    await addLog('手动续跑已完成（第 9 步）。', 'ok');
     if (handedOffPausedAutoRun && inheritedRunContext) {
       await ensureAutoRunStatsLoaded();
       await setAutoRunStats(recordAutoRunSuccess(autoRunStatsState, {
@@ -2053,7 +2147,7 @@ async function executeStep(step) {
   console.log(LOG_PREFIX, `Executing step ${step}`);
   throwIfStopped();
   await setStepStatus(step, 'running');
-  await addLog(`Step ${step} started`);
+  await addLog(`第 ${step} 步开始执行`);
   await humanStepDelay();
 
   const state = await getState();
@@ -2084,13 +2178,13 @@ async function executeStep(step) {
     if (isStopError(err)) {
       if (!shouldSkipStepResultLog(currentStepStatus)) {
         await setStepStatus(step, 'stopped');
-        await addLog(`Step ${step} stopped by user`, 'warn');
+        await addLog(`第 ${step} 步已由用户停止`, 'warn');
       }
       throw err;
     }
     if (!shouldSkipStepResultLog(currentStepStatus)) {
       await setStepStatus(step, 'failed');
-      await addLog(`Step ${step} failed: ${displayedError}`, 'error');
+      await addLog(`第 ${step} 步失败：${displayedError}`, 'error');
     }
     throw new Error(displayedError);
   }
@@ -2183,7 +2277,7 @@ async function recoverStep1VpsPanel(error) {
   const state = await getState();
   const message = error?.message || String(error || 'unknown step 1 error');
   await addLog(
-    `Step 1: ${message} Reopening the VPS panel and retrying once...`,
+    `第 1 步：${message} 正在重开 VPS 面板并重试一次。`,
     'warn'
   );
 
@@ -2196,7 +2290,7 @@ async function recoverStep1VpsPanel(error) {
 async function recoverStep2PlatformLogin(error) {
   const message = error?.message || String(error || 'unknown step 2 error');
   await addLog(
-    `Step 2: ${message} Reopening the platform login page and retrying once...`,
+    `第 2 步：${message} 正在重开 Platform 登录页并重试一次。`,
     'warn'
   );
   await reuseOrCreateTab('signup-page', OFFICIAL_SIGNUP_ENTRY_URL, {
@@ -2223,7 +2317,7 @@ async function replayStep2AndStep3WithCurrentTmailorLease(error) {
   };
   await setTmailorEmailLease({ recoveryAttempts: nextRecoveryAttempts });
   await addLog(
-    `Step 4: ${error?.message || String(error || 'unknown error')} Reopening the platform login page and replaying steps 2-3 once with leased TMailor mailbox ${lease.email}...`,
+    `第 4 步：${error?.message || String(error || 'unknown error')} 正在重开 Platform 登录页，并用当前租约邮箱 ${lease.email} 重放第 2-3 步一次。`,
     'warn'
   );
 
@@ -2268,7 +2362,7 @@ async function fetchDuckEmail(options = {}) {
   }
 
   await setEmailState(result.email);
-  await addLog(`Duck Mail: ${result.generated ? 'Generated' : 'Loaded'} ${result.email}`, 'ok');
+  await addLog(`Duck Mail 邮箱已${result.generated ? '生成' : '加载'}：${result.email}`, 'ok');
   return result.email;
 }
 
@@ -2386,7 +2480,7 @@ async function recordTmailorOutcome(result, context = {}) {
     const nextState = await setTmailorDomainState(recordTmailorDomainSuccess(state.tmailorDomainState, domain));
     await setState({ tmailorOutcomeRecorded: true });
     if (!wasWhitelisted && nextState.whitelist.includes(domain)) {
-      await addLog(`TMailor: Added ${domain} to the whitelist after a successful run.`, 'ok');
+      await addLog(`TMailor 域名已加入白名单：${domain}`, 'ok');
     }
     return;
   }
@@ -2398,7 +2492,7 @@ async function recordTmailorOutcome(result, context = {}) {
   }));
   await setState({ tmailorOutcomeRecorded: true });
   if (shouldBlacklist && nextState.blacklist.includes(domain)) {
-    await addLog(`TMailor: Added ${domain} to the blacklist after a blocked run.`, 'warn');
+    await addLog(`TMailor 域名已加入黑名单：${domain}`, 'warn');
   }
 }
 
@@ -2425,7 +2519,7 @@ async function generate33MailEmail(options = {}) {
   const nextUsageState = recordMailProviderUsage(state.mailProviderUsage, currentProvider);
   await setState({ mailProviderUsage: nextUsageState });
   await setEmailState(email);
-  await addLog(`33mail: Generated ${email} for ${currentProvider}`, 'ok');
+  await addLog(`33mail 已生成邮箱：${email}（通道 ${currentProvider}）`, 'ok');
   return email;
 }
 
@@ -2463,7 +2557,7 @@ async function fetchTmailorEmail(options = {}) {
           status: 'active',
           invalidReason: '',
         });
-        await addLog(`TMailor API: Mailbox ready ${result.email} (token saved for API inbox polling).`, 'ok');
+        await addLog(`TMailor API 邮箱已就绪：${result.email}（已保存令牌，后续可直接轮询收件箱）`, 'ok');
         return result.email;
       } catch (err) {
         if (isTmailorApiCaptchaError(err)) {
@@ -2472,15 +2566,15 @@ async function fetchTmailorEmail(options = {}) {
             cooldownMs: TMAILOR_API_CAPTCHA_COOLDOWN_MS,
           });
           await setState({ tmailorApiCaptchaCooldownUntil: cooldownUntil });
-          await addLog(`TMailor API: New mailbox request failed: ${err.message}`, 'warn');
+          await addLog(`TMailor API 请求新邮箱失败：${err.message}`, 'warn');
           await addLog(
             `TMailor API: Pausing automatic mailbox API attempts for ${formatWaitDuration(TMAILOR_API_CAPTCHA_COOLDOWN_MS)} before retrying the API path.`,
             'warn'
           );
-          await addLog('TMailor API reported a captcha/block. Opening the mailbox page to inspect the challenge and auto-attempt it before manual takeover.', 'warn');
+          await addLog('TMailor API 检测到验证码或封锁，准备打开邮箱页检查挑战，并先自动尝试处理。', 'warn');
         } else {
-          await addLog(`TMailor API: New mailbox request failed: ${err.message}`, 'warn');
-          await addLog('TMailor: Falling back to the mailbox page flow for address generation.', 'warn');
+          await addLog(`TMailor API 请求新邮箱失败：${err.message}`, 'warn');
+          await addLog('TMailor API 路径不可用，改走邮箱页面流程生成地址。', 'warn');
         }
       }
     }
@@ -2502,7 +2596,7 @@ async function fetchTmailorEmail(options = {}) {
   let result = await sendToContentScript(mailboxPageConfig.source, command);
 
   if (result?.recovery === 'reload_mailbox') {
-    await addLog('TMailor: Mailbox page requested a background reload. Reopening the mailbox page and retrying once...', 'warn');
+    await addLog('TMailor 邮箱页请求后台重载，准备重开后重试一次。', 'warn');
     await reviveMailTab(mailboxPageConfig);
     await sleepWithStop(1200);
     result = await sendToContentScript(mailboxPageConfig.source, command);
@@ -2516,7 +2610,7 @@ async function fetchTmailorEmail(options = {}) {
   }
 
   await markTmailorOutcomePending(result.email);
-  await addLog(`TMailor: Ready ${result.email}`, 'ok');
+  await addLog(`TMailor 邮箱已就绪：${result.email}`, 'ok');
   return result.email;
 }
 
@@ -2700,7 +2794,7 @@ async function finalizePersistentAutoRunPauseWatchdogTimeout(error, state = {}, 
 
   if (shouldContinueAfterWatchdog) {
     clearStopRequest();
-    await addLog(`=== Run ${failureRecord.runLabel} watchdog timeout. Starting next run automatically... ===`, 'warn');
+    await addLog(`=== 第 ${failureRecord.runLabel} 轮看门狗超时，准备自动开始下一轮... ===`, 'warn');
     sendAutoRunStatus('running', { currentRun });
     startAutoRunLoop(
       sanitizeAutoRunCount(state.autoRunCount),
@@ -2875,7 +2969,7 @@ function startAutoRunLoop(totalRuns, infiniteMode = false, options = {}) {
           summaryMessage: failureRecord.logMessage,
         });
       }
-      await addLog(`Auto run crashed unexpectedly: ${err.message}`, 'error');
+      await addLog(`自动运行异常中断：${err.message}`, 'error');
     })
     .finally(() => {
       resetAutoRunWatchdog({ preserveLastLog: true });
@@ -2901,7 +2995,7 @@ async function waitForAutoRunTaskToSettle() {
 // Outer loop: runs the full flow N times
 async function autoRunLoop(totalRuns, infiniteMode = false, options = {}) {
   if (autoRunActive) {
-    await addLog('Auto run already in progress', 'warn');
+    await addLog('自动运行已经在进行中。', 'warn');
     return;
   }
 
@@ -3011,23 +3105,23 @@ async function autoRunLoop(totalRuns, infiniteMode = false, options = {}) {
       throwIfStopped();
       const currentState = await getState();
       const currentEmailSource = getCurrentEmailSource(currentState);
-      await addLog(`=== Auto Run ${runTargetText} — Phase 1: Refresh ${getEmailSourceLabel(currentEmailSource)}, then open the platform login page ===`, 'info');
+      await addLog(`=== 自动运行 ${runTargetText} — 阶段 1：刷新 ${getEmailSourceLabel(currentEmailSource)}，然后打开 Platform 登录页 ===`, 'info');
       sendAutoRunStatus('running', { currentRun: run });
 
       let emailReady = false;
       try {
         const nextEmail = await fetchEmailAddress({ generateNew: true });
-        await addLog(`=== Run ${runTargetText} — ${getEmailSourceLabel(currentEmailSource)} ready: ${nextEmail} ===`, 'ok');
+      await addLog(`=== 第 ${runTargetText} 轮 — ${getEmailSourceLabel(currentEmailSource)} 已就绪：${nextEmail} ===`, 'ok');
         emailReady = true;
       } catch (err) {
         if (isStopError(err)) {
           throw err;
         }
-        await addLog(`${getEmailSourceLabel(currentEmailSource)} auto-fetch failed: ${err.message}`, 'warn');
+        await addLog(`${getEmailSourceLabel(currentEmailSource)} 自动取号失败：${err.message}`, 'warn');
       }
 
       if (!emailReady) {
-        await addLog(`=== Run ${runTargetText} PAUSED: ${getEmailWaitHint(currentEmailSource)} ===`, 'warn');
+        await addLog(`=== 第 ${runTargetText} 轮已暂停：${getEmailWaitHint(currentEmailSource)} ===`, 'warn');
         sendAutoRunStatus('waiting_email', { currentRun: run });
 
         // Wait for RESUME_AUTO_RUN — sets a promise that resumeAutoRun resolves
@@ -3074,11 +3168,11 @@ async function autoRunLoop(totalRuns, infiniteMode = false, options = {}) {
         }
       }
 
-      await addLog(`=== Run ${runTargetText} — Phase 2: Open platform login page ===`, 'info');
+      await addLog(`=== 第 ${runTargetText} 轮 — 阶段 2：打开 Platform 登录页 ===`, 'info');
       sendAutoRunStatus('running', { currentRun: run });
       await executeStepAndWait(2, 2000);
 
-      await addLog(`=== Run ${runTargetText} — Phase 3: Request code, verify, login, complete ===`, 'info');
+      await addLog(`=== 第 ${runTargetText} 轮 — 阶段 3：请求验证码、验证、登录并完成流程 ===`, 'info');
       sendAutoRunStatus('running', { currentRun: run });
 
       const signupTabId = await getTabId('signup-page');
@@ -3091,7 +3185,7 @@ async function autoRunLoop(totalRuns, infiniteMode = false, options = {}) {
         executeStepAndWait,
       });
 
-      await addLog(`=== Run ${runTargetText} COMPLETE! ===`, 'ok');
+      await addLog(`=== 第 ${runTargetText} 轮已完成！===`, 'ok');
       await ensureAutoRunStatsLoaded();
       await setAutoRunStats(recordAutoRunSuccess(autoRunStatsState, {
         durationMs: Math.max(0, Date.now() - runStartedAt),
@@ -3121,7 +3215,7 @@ async function autoRunLoop(totalRuns, infiniteMode = false, options = {}) {
           autoRunActive = true;
           await setState({ autoRunning: true });
           startAutoRunWatchdog();
-          await addLog(`=== Run ${runTargetText} watchdog timeout. Starting next run automatically... ===`, 'warn');
+          await addLog(`=== 第 ${runTargetText} 轮看门狗超时，准备自动开始下一轮... ===`, 'warn');
           sendAutoRunStatus('running', { currentRun: run });
           continue;
         }
@@ -3132,7 +3226,7 @@ async function autoRunLoop(totalRuns, infiniteMode = false, options = {}) {
         await addLog(`Run ${runTargetText} handed off to manual continuation`, 'info');
         break;
       } else if (isStopError(err)) {
-        await addLog(`Run ${runTargetText} stopped by user`, 'warn');
+        await addLog(`第 ${runTargetText} 轮已由用户停止。`, 'warn');
         await setState({ currentRunStep: 0 });
         break;
       } else {
@@ -3146,9 +3240,9 @@ async function autoRunLoop(totalRuns, infiniteMode = false, options = {}) {
         await setState({ currentRunStep: 0 });
         if (autoRunInfinite || run < totalRuns) {
           if (/step 5 failed: .*unsupported_email|step 5 failed: auth fatal error page detected after profile submit\.|step 5 failed: could not find name input/i.test(err.message || '')) {
-            await addLog(`Run ${runTargetText}: TMailor domain was blocked during step 5. Marked as failed and moving to the next run.`, 'warn');
+            await addLog(`第 ${runTargetText} 轮在第 5 步触发 TMailor 域名封锁，已标记失败并切换到下一轮。`, 'warn');
           }
-          await addLog(`=== Run ${runTargetText} failed. Starting next run automatically... ===`, 'warn');
+          await addLog(`=== 第 ${runTargetText} 轮失败，准备自动开始下一轮... ===`, 'warn');
           sendAutoRunStatus('running', { currentRun: run });
           continue;
         }
@@ -3208,7 +3302,7 @@ async function resumeAutoRun() {
   throwIfStopped();
   const state = await getState();
   if (getCurrentEmailSource(state) !== '33mail' && !state.email) {
-    await addLog('Cannot resume: no email address. Paste email in Side Panel first.', 'error');
+    await addLog('无法继续：当前没有邮箱地址，请先在侧边栏填写或粘贴邮箱。', 'error');
     return false;
   }
   if (resumeWaiter) {
@@ -3216,7 +3310,7 @@ async function resumeAutoRun() {
     resumeWaiter = null;
     return true;
   }
-  await addLog('Auto run resume was requested, but no paused auto-run waiter is active. Falling back to step 3 is allowed.', 'warn');
+  await addLog('收到恢复自动运行请求，但当前没有处于暂停等待中的自动流程，允许回退到第 3 步继续。', 'warn');
   return false;
 }
 
@@ -3284,6 +3378,14 @@ function isStep2RecoveredAuthPageReady(pageState = {}) {
   return false;
 }
 
+function isStep2UnexpectedAuthLoginPageState(pageState = {}) {
+  const url = String(pageState?.url || '').trim();
+  return /(?:auth|accounts)\.openai\.com\/log-?in(?:[/?#]|$)/i.test(url)
+    && Boolean(pageState?.hasVisibleCredentialInput)
+    && !pageState?.hasVisibleVerificationInput
+    && !pageState?.hasVisibleProfileFormInput;
+}
+
 async function executeStep2(state, options = {}) {
   const replayedAfterNavigationInterrupt = Boolean(options?.replayedAfterNavigationInterrupt);
   const preferSignupEntry = Boolean(options?.preferSignupEntry);
@@ -3293,12 +3395,12 @@ async function executeStep2(state, options = {}) {
 
   if (replayedAfterNavigationInterrupt) {
     await addLog(
-      'Step 2: Replaying the platform login step after the navigation interrupt left the page on the signing bridge...',
+      '第 2 步：导航打断后页面还卡在 signing bridge，正在重放 Platform 登录页步骤。',
       'warn'
     );
   }
 
-  await addLog(`Step 2: Opening platform login page...`);
+  await addLog('第 2 步：正在打开 Platform 登录页...');
   await reuseOrCreateTab('signup-page', OFFICIAL_SIGNUP_ENTRY_URL, {
     reuseActiveTabOnCreate: true,
     reloadIfSameUrl: replayedAfterNavigationInterrupt,
@@ -3317,7 +3419,7 @@ async function executeStep2(state, options = {}) {
     const errorMessage = err?.message || String(err || '');
     if (isMessageChannelClosedError(errorMessage) || isReceivingEndMissingError(errorMessage)) {
       await addLog(
-        'Step 2: Signup page navigated before the step-2 response returned. Continuing to wait for completion signal...',
+        '第 2 步：signup 页面在返回结果前已发生跳转，继续等待完成信号。',
         'warn'
       );
       await waitForStep2CompletionSignalOrAuthPageReady();
@@ -3346,13 +3448,29 @@ async function waitForStep2CompletionSignalOrAuthPageReady() {
 
     if (authPageReady) {
       await addLog(
-        'Step 2: Auth page is ready after the navigation interrupt. Completing the step from the background fallback.',
+        '第 2 步：导航打断后 auth 页面已就绪，改由后台兜底判定本步完成。',
         'warn'
       );
       step2NavigationReplayAttempted = false;
       await setStepStatus(2, 'completed');
       notifyStepComplete(2, { recoveredAfterNavigation: true });
       return;
+    }
+
+    if (isStep2UnexpectedAuthLoginPageState(pageState)) {
+      if (!step2NavigationReplayAttempted) {
+        step2NavigationReplayAttempted = true;
+        await addLog(
+          '第 2 步：导航打断后页面回退到了 auth.openai.com/log-in，准备重开 Platform 登录入口再试一次。',
+          'warn'
+        );
+        await executeStep2(currentState, { replayedAfterNavigationInterrupt: true });
+        return;
+      }
+
+      throw new Error(
+        'Step 2 blocked: auth page fell back to auth.openai.com/log-in instead of the platform login entry after logout recovery.'
+      );
     }
 
     const elapsedMs = Date.now() - start;
@@ -3368,7 +3486,7 @@ async function waitForStep2CompletionSignalOrAuthPageReady() {
       if (!step2NavigationReplayAttempted && elapsedMs >= 3000) {
         step2NavigationReplayAttempted = true;
         await addLog(
-          'Step 2: Auth page is still stuck on the platform signing bridge after the navigation interrupt. Replaying step 2 once after reinjection...',
+          '第 2 步：导航打断后页面仍卡在 Platform signing bridge，重注入后重放第 2 步一次。',
           'warn'
         );
         await executeStep2(currentState, { replayedAfterNavigationInterrupt: true });
@@ -3436,7 +3554,7 @@ async function executeStep3(state) {
     await setState({ accounts });
   }
 
-  await addLog(`Step 3: Filling email ${email}, clicking Continue, and requesting a one-time verification code...`);
+  await addLog(`第 3 步：正在填写邮箱 ${email}，点击 Continue，并请求一次性验证码...`);
   try {
     await sendToContentScript('signup-page', {
       type: 'EXECUTE_STEP',
@@ -3448,7 +3566,7 @@ async function executeStep3(state) {
     const errorMessage = err?.message || String(err || '');
     if (isMessageChannelClosedError(errorMessage) || isReceivingEndMissingError(errorMessage)) {
       await addLog(
-        'Step 3: Signup page navigated before the step-3 response returned. Continuing to wait for completion signal...',
+        '第 3 步：signup 页面在返回结果前已发生跳转，继续等待完成信号。',
         'warn'
       );
       await waitForStep3CompletionSignalOrRecoveredAuthState();
@@ -3499,7 +3617,7 @@ async function waitForStep3CompletionSignalOrRecoveredAuthState() {
     if (isStep3RecoveredAuthPageReady(pageState)) {
       const payload = { recoveredAfterNavigation: true };
       await addLog(
-        'Step 3: Auth page already advanced beyond the credential form after the navigation interrupt. Completing the step from the background fallback.',
+        '第 3 步：导航打断后页面已越过凭证表单，改由后台兜底判定本步完成。',
         'warn'
       );
       await setStepStatus(3, 'completed');
@@ -3518,7 +3636,7 @@ async function waitForStep3CompletionSignalOrRecoveredAuthState() {
         existingAccountLogin: true,
       };
       await addLog(
-        'Step 3: Existing-account login password page is already visible after the navigation interrupt. Completing the step from the background fallback and keeping the current email/password for login.',
+        '第 3 步：导航打断后已进入已有账号登录密码页，本步由后台兜底完成，并保留当前邮箱和密码继续登录。',
         'warn'
       );
       await setStepStatus(3, 'completed');
@@ -3592,7 +3710,7 @@ async function clickResendOnSignupPage(step) {
       source: 'background',
     });
   } catch (err) {
-    await addLog(`Step ${step}: Resend click skipped: ${err.message}`, 'warn');
+    await addLog(`第 ${step} 步：已跳过“重发”点击，原因：${err.message}`, 'warn');
   }
 }
 
@@ -3674,15 +3792,15 @@ async function pollVerificationCodeFromMail(step, mail, payload) {
         },
       });
       markAutoRunCurrentSuccessMode('api');
-      await addLog(`Step ${step}: TMailor API returned verification code ${apiResult.code}.`, 'ok');
+      await addLog(`第 ${step} 步：TMailor API 已返回验证码 ${apiResult.code}。`, 'ok');
       return apiResult;
     } catch (err) {
-      await addLog(`Step ${step}: TMailor API inbox polling failed: ${err.message}`, 'warn');
+      await addLog(`第 ${step} 步：TMailor API 轮询收件箱失败：${err.message}`, 'warn');
       if (useTmailorApiMailboxOnly) {
         await addLog(`Step ${step}: ${getTmailorApiOnlyPollingMessage(state.email)}`, 'warn');
         throw err;
       }
-      await addLog(`Step ${step}: Falling back to the TMailor page DOM flow for inbox polling.`, 'warn');
+      await addLog(`第 ${step} 步：改为使用 TMailor 页面 DOM 流程轮询收件箱。`, 'warn');
     }
   }
 
@@ -3740,7 +3858,7 @@ async function pollVerificationCodeFromMail(step, mail, payload) {
   }
 
   if (result?.recovery === 'reload_mailbox') {
-    await addLog(`Step ${step}: Mailbox page requested a background reload (${result.reason || 'reload_mailbox'}). Reopening mailbox and retrying once...`, 'warn');
+    await addLog(`第 ${step} 步：邮箱页请求后台重载（${result.reason || 'reload_mailbox'}），准备重开邮箱页并重试一次。`, 'warn');
     await reviveMailTab(mail);
     await sleepWithStop(1200);
     result = await sendToContentScript(mail.source, {
@@ -3780,6 +3898,29 @@ async function tryDirectVerificationCodeFillOnCurrentSignupPage(step, code) {
 
   const signupTab = await chrome.tabs.get(signupTabId).catch(() => null);
   const currentUrl = String(signupTab?.url || '').trim();
+  const pageState = await getSignupAuthPageState().catch(() => null);
+
+  if (
+    step === 4
+    && (
+      pageState?.hasReadyProfilePage
+      || pageState?.hasVisibleProfileFormInput
+      || isCanonicalAboutYouUrl(pageState?.url)
+      || isStableStep5SuccessUrl(pageState?.url)
+    )
+  ) {
+    await addLog(
+      `第 ${step} 步：检测到页面已经到达 about-you/资料页，跳过验证码页补填重试。 | 调试：URL=${pageState?.url || currentUrl || 'unknown'}; profile=${Boolean(pageState?.hasVisibleProfileFormInput)}; readyProfile=${Boolean(pageState?.hasReadyProfilePage)}`,
+      'info'
+    );
+    return {
+      attempted: false,
+      accepted: true,
+      reason: 'profile-page-already-ready',
+      url: pageState?.url || currentUrl,
+    };
+  }
+
   if (!/(?:auth|accounts)\.openai\.com\/(?:account\/)?email-verification/i.test(currentUrl)) {
     return {
       attempted: false,
@@ -3966,7 +4107,7 @@ async function tryDirectVerificationCodeFillOnCurrentSignupPage(step, code) {
   }
 
   if (result?.retryInbox) {
-    await addLog(`Step ${step}: Current verification page rejected the code. Returning to inbox polling...`, 'warn');
+    await addLog(`第 ${step} 步：当前验证码已被页面拒绝，返回收件箱继续轮询。`, 'warn');
     return result;
   }
 
@@ -4136,7 +4277,46 @@ async function getSignupPageFallbackAuthState() {
   }
 
   const signupTab = await chrome.tabs.get(signupTabId).catch(() => null);
-  if (!isStableStep5SuccessUrl(signupTab?.url)) {
+  const signupUrl = String(signupTab?.url || '').trim();
+  if (!signupUrl) {
+    return null;
+  }
+
+  if (isCanonicalEmailVerificationUrl(signupUrl)) {
+    return {
+      isReachable: true,
+      requiresPhoneVerification: false,
+      hasUnsupportedEmail: false,
+      hasFatalError: false,
+      hasAuthOperationTimedOut: false,
+      hasVisibleCredentialInput: false,
+      hasVisibleSignupRegistrationChoice: false,
+      hasVisibleVerificationInput: false,
+      hasVisibleProfileFormInput: false,
+      hasReadyVerificationPage: true,
+      hasReadyProfilePage: false,
+      url: signupUrl,
+    };
+  }
+
+  if (isCanonicalAboutYouUrl(signupUrl)) {
+    return {
+      isReachable: true,
+      requiresPhoneVerification: false,
+      hasUnsupportedEmail: false,
+      hasFatalError: false,
+      hasAuthOperationTimedOut: false,
+      hasVisibleCredentialInput: false,
+      hasVisibleSignupRegistrationChoice: false,
+      hasVisibleVerificationInput: false,
+      hasVisibleProfileFormInput: false,
+      hasReadyVerificationPage: false,
+      hasReadyProfilePage: true,
+      url: signupUrl,
+    };
+  }
+
+  if (!isStableStep5SuccessUrl(signupUrl)) {
     return null;
   }
 
@@ -4152,7 +4332,7 @@ async function getSignupPageFallbackAuthState() {
     hasVisibleProfileFormInput: false,
     hasReadyVerificationPage: false,
     hasReadyProfilePage: false,
-    url: signupTab.url,
+    url: signupUrl,
   };
 }
 
@@ -4246,6 +4426,9 @@ async function ensureSignupPageReadyForVerification(state, step = 4) {
   let refreshedOauthAfterTimeout = false;
   let hasLoggedAmbiguousPageWait = false;
   let hasLoggedUnreachableWait = false;
+  let hasLoggedStableLandingWait = false;
+  let hasLoggedVerificationShortcutWait = false;
+  let consecutiveVerificationShortcutSignals = 0;
   let lastPageState = null;
 
   while (Date.now() - start < timeoutMs) {
@@ -4270,7 +4453,7 @@ async function ensureSignupPageReadyForVerification(state, step = 4) {
       }
 
       await addLog(
-        `Step ${step}: Signup auth page timed out before the verification email step. Refreshing the VPS OAuth link and replaying step 3...`,
+        `第 ${step} 步：验证码邮件阶段前 auth 页面先超时了，正在刷新 VPS OAuth 链接并重放第 3 步。`,
         'warn'
       );
       refreshedOauthAfterTimeout = true;
@@ -4289,11 +4472,41 @@ async function ensureSignupPageReadyForVerification(state, step = 4) {
       throw new Error(blockerMessage);
     }
 
+    if (isStableStep5SuccessUrl(pageState?.url)) {
+      if (!hasLoggedStableLandingWait) {
+        hasLoggedStableLandingWait = true;
+        await addLog(
+          `第 ${step} 步：当前页面已经到达 https://platform.openai.com/welcome?step=create，跳过额外 auth 等待，直接继续查收邮件。 | 调试：URL=${pageState?.url || 'unknown'}`,
+          'info'
+        );
+      }
+      return state;
+    }
+
     if (pageState?.hasReadyVerificationPage || pageState?.hasReadyProfilePage) {
       return state;
     }
 
+    const hasVerificationShortcutSignal = Boolean(
+      isCanonicalEmailVerificationUrl(pageState?.url)
+      || pageState?.hasVisibleVerificationInput
+    );
+    consecutiveVerificationShortcutSignals = hasVerificationShortcutSignal
+      ? consecutiveVerificationShortcutSignals + 1
+      : 0;
+    if (consecutiveVerificationShortcutSignals >= 2) {
+      if (!hasLoggedVerificationShortcutWait) {
+        hasLoggedVerificationShortcutWait = true;
+        await addLog(
+          `第 ${step} 步：当前页面已连续两次显示 email-verification 或验证码输入框，直接开始查收邮件。 | 调试：URL=${pageState?.url || 'unknown'}; verification=${Boolean(pageState?.hasVisibleVerificationInput)}; readyVerification=${Boolean(pageState?.hasReadyVerificationPage)}`,
+          'info'
+        );
+      }
+      return state;
+    }
+
     if (pageState?.hasVisibleCredentialInput) {
+      consecutiveVerificationShortcutSignals = 0;
       await addLog(`Step ${step}: Signup page is still on the credential form. Waiting before checking the inbox...`, 'info');
       await sleepWithStop(1000);
       continue;
@@ -4315,9 +4528,12 @@ async function ensureSignupPageReadyForVerification(state, step = 4) {
   }
 
   await addLog(
-    `Step ${step}: Final signup auth state before inbox polling timed out. URL=${lastPageState?.url || 'unknown'}; credential=${Boolean(lastPageState?.hasVisibleCredentialInput)}; verification=${Boolean(lastPageState?.hasVisibleVerificationInput)}; profile=${Boolean(lastPageState?.hasVisibleProfileFormInput)}; readyVerification=${Boolean(lastPageState?.hasReadyVerificationPage)}; readyProfile=${Boolean(lastPageState?.hasReadyProfilePage)}; fatal=${Boolean(lastPageState?.hasFatalError)}; phone=${Boolean(lastPageState?.requiresPhoneVerification)}.`,
+    `第 ${step} 步：等待开始查收邮件前，signup auth 页面状态检查超时。URL=${lastPageState?.url || 'unknown'}; credential=${Boolean(lastPageState?.hasVisibleCredentialInput)}; verification=${Boolean(lastPageState?.hasVisibleVerificationInput)}; profile=${Boolean(lastPageState?.hasVisibleProfileFormInput)}; readyVerification=${Boolean(lastPageState?.hasReadyVerificationPage)}; readyProfile=${Boolean(lastPageState?.hasReadyProfilePage)}; fatal=${Boolean(lastPageState?.hasFatalError)}; phone=${Boolean(lastPageState?.requiresPhoneVerification)}.`,
     'warn'
   );
+  if (lastPageState?.isReachable === false) {
+    throw new Error(`Step ${step} blocked: signup auth page stayed unreachable before the verification email step.`);
+  }
   throw new Error(`Step ${step} blocked: signup page never advanced past the credential form, so the verification email was probably not sent.`);
 }
 
@@ -4398,7 +4614,7 @@ async function executeVerificationMailStep(step, state, options) {
       }
 
       if (!resendTriggered && inboxCheck >= resendAfterAttempts) {
-        await addLog(`Step ${step}: No new email after ${inboxCheck} inbox checks. Triggering resend once, then checking again...`, 'warn');
+        await addLog(`第 ${step} 步：连续检查 ${inboxCheck} 次仍没有新邮件，先触发一次重发，再继续检查。`, 'warn');
         await clickResendOnSignupPage(step);
         resendTriggered = true;
         continue;
@@ -4461,6 +4677,8 @@ async function ensureSignupPageReadyForProfile(state, step = 5) {
   const timeoutMs = 15000;
   let hasLoggedVerificationWait = false;
   let hasLoggedAmbiguousProfileWait = false;
+  let hasLoggedProfileShortcut = false;
+  let consecutiveProfileShortcutSignals = 0;
   let lastPageState = null;
 
   while (Date.now() - start < timeoutMs) {
@@ -4475,11 +4693,34 @@ async function ensureSignupPageReadyForProfile(state, step = 5) {
       throw new Error(`Step ${step} blocked: auth page requires phone verification before profile completion.`);
     }
 
+    if (isStableStep5SuccessUrl(pageState?.url)) {
+      return { ...state, ...pageState };
+    }
+
     if (pageState?.hasReadyProfilePage) {
-      return state;
+      return { ...state, ...pageState };
+    }
+
+    const hasProfileShortcutSignal = Boolean(
+      isCanonicalAboutYouUrl(pageState?.url)
+      && pageState?.hasVisibleProfileFormInput
+    );
+    consecutiveProfileShortcutSignals = hasProfileShortcutSignal
+      ? consecutiveProfileShortcutSignals + 1
+      : 0;
+    if (consecutiveProfileShortcutSignals >= 2) {
+      if (!hasLoggedProfileShortcut) {
+        hasLoggedProfileShortcut = true;
+        await addLog(
+          `第 ${step} 步：当前页面已进入 about-you 资料页，且输入框已连续两次可见，直接开始填写资料。 | 调试：URL=${pageState?.url || 'unknown'}; profile=${Boolean(pageState?.hasVisibleProfileFormInput)}; readyProfile=${Boolean(pageState?.hasReadyProfilePage)}`,
+          'info'
+        );
+      }
+      return { ...state, ...pageState };
     }
 
     if (pageState?.hasReadyVerificationPage || pageState?.hasVisibleVerificationInput) {
+      consecutiveProfileShortcutSignals = 0;
       if (!hasLoggedVerificationWait) {
         hasLoggedVerificationWait = true;
         await addLog(
@@ -4503,7 +4744,7 @@ async function ensureSignupPageReadyForProfile(state, step = 5) {
       continue;
     }
 
-    return state;
+    return { ...state, ...pageState };
   }
 
   if (lastPageState?.hasReadyVerificationPage || lastPageState?.hasVisibleVerificationInput) {
@@ -4513,7 +4754,7 @@ async function ensureSignupPageReadyForProfile(state, step = 5) {
     );
   }
 
-  return state;
+  return { ...state, ...(lastPageState || {}) };
 }
 
 // ============================================================
@@ -4533,7 +4774,23 @@ async function executeStep5(state) {
 
   const { firstName, lastName } = generateRandomName();
   const { year, month, day } = generateRandomBirthday();
-  await ensureSignupPageReadyForProfile(state, 5);
+  const profileReadyState = await ensureSignupPageReadyForProfile(state, 5);
+
+  if (isStableStep5SuccessUrl(profileReadyState?.url)) {
+    const payload = {
+      skippedProfileForm: true,
+      recoveredFromWelcomeLanding: true,
+      url: profileReadyState?.url || '',
+    };
+    await addLog(
+      `第 5 步：当前页面已经到达 https://platform.openai.com/welcome?step=create，直接视为资料页已完成。 | 调试：URL=${profileReadyState?.url || 'unknown'}`,
+      'warn'
+    );
+    await setStepStatus(5, 'completed');
+    await handleStepData(5, payload);
+    notifyStepComplete(5, payload);
+    return;
+  }
 
   await addLog(`Step 5: Generated name: ${firstName} ${lastName}, Birthday: ${year}-${month}-${day}`);
 
@@ -4870,7 +5127,7 @@ async function retryStep8ConsentClickIfStillVisible(signupTabId, {
   }
 
   await addLog(
-    `Step 8: Consent page is still visible during heartbeat after ${seconds}s; retrying the "继续" click...`,
+    `第 8 步：心跳检查时发现授权同意页在 ${seconds}s 后仍然可见，准备再次点击“继续”。`,
     'warn'
   );
   await clickWithDebugger(signupTabId, clickResult.rect);
@@ -4912,7 +5169,7 @@ async function tryStep8ConsentSubmitFallback(signupTabId, {
     ? ` because the consent button click point is covered by ${hitTargetDescription}`
     : '';
   await addLog(
-    `Step 8: Consent page is still visible during heartbeat after ${seconds}s${reasonSuffix}. Trying an in-page submit fallback before another debugger click...`,
+    `第 8 步：心跳检查时发现授权同意页在 ${seconds}s 后仍然可见${reasonSuffix}，先尝试页内提交兜底，再决定是否继续走 debugger 点击。`,
     'warn'
   );
   await addLog(
@@ -4969,7 +5226,7 @@ async function executeStep8(state) {
     try {
       const tab = await chrome.tabs.get(signupTabIdEarly);
       if (tab.url && (tab.url.startsWith('http://localhost') || tab.url.startsWith('http://127.0.0.1'))) {
-        await addLog(`Step 8: Localhost redirect already captured: ${tab.url}`, 'ok');
+        await addLog(`第 8 步：已提前捕获到 localhost 回调：${tab.url}`, 'ok');
         await setState({ localhostUrl: tab.url });
         broadcastDataUpdate({ localhostUrl: tab.url });
         return;
@@ -5001,7 +5258,7 @@ async function executeStep8(state) {
       cleanupListeners();
       clearTimeout(timeout);
       setState({ localhostUrl: url }).then(() => {
-        addLog(`Step 8: Captured localhost URL: ${url}`, 'ok');
+        addLog(`第 8 步：已捕获 localhost 回调地址：${url}`, 'ok');
         setStepStatus(8, 'completed');
         notifyStepComplete(8, { localhostUrl: url });
         broadcastDataUpdate({ localhostUrl: url });

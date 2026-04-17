@@ -16,15 +16,15 @@ test('background copy reflects the email-first auto-run flow while keeping the p
   );
   assert.match(
     backgroundSource,
-    /Phase 1: Refresh .* then open the platform login page/i
+    /阶段 1：刷新 .*，然后打开 Platform 登录页/i
   );
   assert.match(
     backgroundSource,
-    /Phase 2: Open platform login page/i
+    /阶段 2：打开 Platform 登录页/i
   );
   assert.match(
     backgroundSource,
-    /Step 2: Opening platform login page/i
+    /第 2 步：正在打开 Platform 登录页/i
   );
   assert.match(
     backgroundSource,
@@ -32,12 +32,39 @@ test('background copy reflects the email-first auto-run flow while keeping the p
   );
   assert.match(
     backgroundSource,
-    /clicking Continue, and requesting a one-time verification code/i
+    /正在填写邮箱 .*，点击 Continue，并请求一次性验证码/i
   );
   assert.doesNotMatch(
     backgroundSource,
     /Phase 1: Open platform login page/i
   );
+});
+
+test('shared and high-frequency warn-ok-error logs prefer Chinese user-facing copy', () => {
+  const utilsSource = readProjectFile(path.join('content', 'utils.js'));
+  const backgroundSource = readProjectFile('background.js');
+  const signupSource = readProjectFile(path.join('content', 'signup-page.js'));
+  const tmailorSource = readProjectFile(path.join('content', 'tmailor-mail.js'));
+  const vpsSource = readProjectFile(path.join('content', 'vps-panel.js'));
+
+  assert.match(utilsSource, /第 \$\{step\} 步执行完成/);
+  assert.match(utilsSource, /第 \$\{step\} 步失败：/);
+
+  assert.match(backgroundSource, /手动续跑失败：/);
+  assert.match(backgroundSource, /手动续跑已完成（第 9 步）/);
+  assert.match(backgroundSource, /自动运行已经在进行中/);
+  assert.match(backgroundSource, /无法继续：当前没有邮箱地址/);
+  assert.match(backgroundSource, /TMailor API 邮箱已就绪/);
+  assert.match(backgroundSource, /TMailor 邮箱页请求后台重载，准备重开后重试一次/);
+
+  assert.match(signupSource, /Platform 登录入口误入已登录会话，先执行登出/);
+  assert.match(signupSource, /头像菜单首次点击未展开，改用底层指针点击重试/);
+  assert.match(signupSource, /第 5 步：验证完成后一直没有出现姓名输入框，视为可跳过资料填写并继续登录流程/);
+
+  assert.match(tmailorSource, /Cloudflare 验证已自动通过/);
+  assert.match(tmailorSource, /临时邮箱已就绪/);
+  assert.match(vpsSource, /VPS 返回 502，改为重新打开已配置的 OAuth 页面/);
+  assert.match(vpsSource, /认证成功/);
 });
 
 test('side panel workflow labels describe the platform login and continue flow', () => {
@@ -67,7 +94,7 @@ test('step 2 has an auth-page-ready fallback when the completion signal is lost 
   );
   assert.match(
     backgroundSource,
-    /Step 2: Signup page navigated before the step-2 response returned[\s\S]*await waitForStep2CompletionSignalOrAuthPageReady\(\);/i
+    /第 2 步：signup 页面在返回结果前已发生跳转，继续等待完成信号[\s\S]*await waitForStep2CompletionSignalOrAuthPageReady\(\);/i
   );
   assert.match(
     backgroundSource,
@@ -80,7 +107,7 @@ test('step 2 navigation fallback replays the signup step when the page is still 
 
   assert.match(
     backgroundSource,
-    /Step 2: Auth page is still stuck on the platform signing bridge after the navigation interrupt[\s\S]*await executeStep2\(currentState,\s*\{\s*replayedAfterNavigationInterrupt:\s*true\s*\}\);/i
+    /第 2 步：导航打断后页面仍卡在 Platform signing bridge，重注入后重放第 2 步一次[\s\S]*await executeStep2\(currentState,\s*\{\s*replayedAfterNavigationInterrupt:\s*true\s*\}\);/i
   );
 });
 
@@ -141,7 +168,7 @@ test('platform chat logout recovery forces the flow back to the platform login e
 
   assert.match(
     signupSource,
-    /async function logoutFromPlatformChatSessionIfNeeded\(\) \{[\s\S]*await clickPlatformLogoutAction\(logoutLabel\);[\s\S]*await waitForPlatformLogoutRedirect\(\);[\s\S]*await ensurePlatformLoginEntryAfterLogout\(\);[\s\S]*Logged out of the existing platform chat session and returned to the login page/i
+    /async function logoutFromPlatformChatSessionIfNeeded\(\) \{[\s\S]*await clickPlatformLogoutAction\(logoutLabel\);[\s\S]*await waitForPlatformLogoutRedirect\(\);[\s\S]*await ensurePlatformLoginEntryAfterLogout\(\);[\s\S]*已登出当前 Platform 会话，并返回登录页/i
   );
   assert.match(
     signupSource,
@@ -162,7 +189,7 @@ test('step 2 retries once by reopening the platform login page after non-navigat
   );
   assert.match(
     backgroundSource,
-    /async function recoverStep2PlatformLogin\(error\) \{[\s\S]*Reopening the platform login page and retrying once[\s\S]*reuseOrCreateTab\('signup-page',\s*OFFICIAL_SIGNUP_ENTRY_URL,\s*\{[\s\S]*reloadIfSameUrl:\s*true[\s\S]*\}\);/i
+    /async function recoverStep2PlatformLogin\(error\) \{[\s\S]*正在重开 Platform 登录页并重试一次[\s\S]*reuseOrCreateTab\('signup-page',\s*OFFICIAL_SIGNUP_ENTRY_URL,\s*\{[\s\S]*reloadIfSameUrl:\s*true[\s\S]*\}\);/i
   );
 });
 
@@ -189,9 +216,34 @@ test('step 2 background fallback only completes once the platform login entry or
     backgroundSource,
     /if \(\/\(\?:auth\|accounts\)\\\.openai\\\.com\\\/\(\?:u\\\/signup\\\/\|create-account\)\/i\.test\(url\)\) \{\s*return true;\s*\}/i
   );
+  assert.doesNotMatch(
+    backgroundSource,
+    /if \(\/\(\?:auth\|accounts\)\\\.openai\\\.com\\\/log-?in\/i\.test\(url\)\) \{\s*return true;\s*\}/i
+  );
   assert.match(
     backgroundSource,
     /const authPageReady = isStep2RecoveredAuthPageReady\(pageState\);/i
+  );
+});
+
+test('step 2 navigation fallback reopens the platform login entry when recovery lands on auth log-in', () => {
+  const backgroundSource = readProjectFile('background.js');
+
+  assert.match(
+    backgroundSource,
+    /function isStep2UnexpectedAuthLoginPageState\(pageState = \{\}\) \{/i
+  );
+  assert.match(
+    backgroundSource,
+    /auth\|accounts[\s\S]*log-\?in|auth\\\|accounts[\s\S]*log-\?in|\(\?:auth\|accounts\)\\\.openai\\\.com\\\/log-\?in/i
+  );
+  assert.match(
+    backgroundSource,
+    /第 2 步：导航打断后页面回退到了 auth\.openai\.com\/log-in，准备重开 Platform 登录入口再试一次/i
+  );
+  assert.match(
+    backgroundSource,
+    /await executeStep2\(currentState,\s*\{\s*replayedAfterNavigationInterrupt:\s*true\s*\}\);/i
   );
 });
 
@@ -226,7 +278,7 @@ test('step 1 retries once by reopening the vps panel after recoverable panel-loa
   );
   assert.match(
     backgroundSource,
-    /async function recoverStep1VpsPanel\(error\) \{[\s\S]*Reopening the VPS panel and retrying once[\s\S]*reuseOrCreateTab\('vps-panel',\s*state\.vpsUrl,\s*\{[\s\S]*reloadIfSameUrl:\s*true[\s\S]*\}\);/i
+    /async function recoverStep1VpsPanel\(error\) \{[\s\S]*正在重开 VPS 面板并重试一次[\s\S]*reuseOrCreateTab\('vps-panel',\s*state\.vpsUrl,\s*\{[\s\S]*reloadIfSameUrl:\s*true[\s\S]*\}\);/i
   );
 });
 
@@ -286,7 +338,7 @@ test('step 3 keeps waiting for completion when the signup auth page enters bfcac
   );
   assert.match(
     backgroundSource,
-    /pageState\?\.hasVisibleCredentialInput[\s\S]*isExistingAccountLoginPasswordPageUrl\(pageState\?\.url\)[\s\S]*!\s*pageState\?\.hasVisibleSignupRegistrationChoice[\s\S]*const payload = \{[\s\S]*recoveredAfterNavigation:\s*true,[\s\S]*existingAccountLogin:\s*true[\s\S]*\};[\s\S]*Existing-account login password page is already visible after the navigation interrupt[\s\S]*notifyStepComplete\(3,\s*payload\)/i
+    /pageState\?\.hasVisibleCredentialInput[\s\S]*isExistingAccountLoginPasswordPageUrl\(pageState\?\.url\)[\s\S]*!\s*pageState\?\.hasVisibleSignupRegistrationChoice[\s\S]*const payload = \{[\s\S]*recoveredAfterNavigation:\s*true,[\s\S]*existingAccountLogin:\s*true[\s\S]*\};[\s\S]*导航打断后已进入已有账号登录密码页[\s\S]*notifyStepComplete\(3,\s*payload\)/i
   );
 });
 
@@ -312,6 +364,19 @@ test('step 3 background fallback only accepts stable post-credential signup page
   assert.doesNotMatch(
     backgroundSource,
     /const advancedPastCredentialForm = Boolean\([\s\S]*pageState\?\.url[\s\S]*!\s*pageState\?\.hasVisibleCredentialInput/i
+  );
+});
+
+test('step 4 direct verification retry first checks whether the auth page already advanced to about-you before warning about a stalled verification page', () => {
+  const backgroundSource = readProjectFile('background.js');
+
+  assert.match(
+    backgroundSource,
+    /async function tryDirectVerificationCodeFillOnCurrentSignupPage\(step,\s*code\) \{[\s\S]*const pageState = await getSignupAuthPageState\(\)\.catch\(\(\) => null\);[\s\S]*step === 4[\s\S]*pageState\?\.hasReadyProfilePage[\s\S]*pageState\?\.hasVisibleProfileFormInput[\s\S]*isCanonicalAboutYouUrl\(pageState\?\.url\)[\s\S]*isStableStep5SuccessUrl\(pageState\?\.url\)[\s\S]*accepted:\s*true[\s\S]*reason:\s*'profile-page-already-ready'/i
+  );
+  assert.match(
+    backgroundSource,
+    /已经到达 about-you\/资料页，跳过验证码页补填重试/i
   );
 });
 
@@ -408,7 +473,7 @@ test('step 8 heartbeats retry the consent-page continue click when the auth page
   );
   assert.match(
     backgroundSource,
-    /Consent page is still visible during heartbeat[\s\S]*retrying the "继续" click/i
+    /第 8 步：心跳检查时发现授权同意页在 .* 后仍然可见，准备再次点击“继续”/i
   );
 });
 
@@ -485,6 +550,15 @@ test('step 5 waits briefly for the page to leave verification and reach the prof
   );
 });
 
+test('step 5 exits immediately when the signup tab already reached the platform welcome create landing page', () => {
+  const backgroundSource = readProjectFile('background.js');
+
+  assert.match(
+    backgroundSource,
+    /async function executeStep5\(state\) \{[\s\S]*const profileReadyState = await ensureSignupPageReadyForProfile\(state,\s*5\);[\s\S]*if \(isStableStep5SuccessUrl\(profileReadyState\?\.url\)\) \{[\s\S]*const payload = \{[\s\S]*recoveredFromWelcomeLanding:\s*true[\s\S]*\};[\s\S]*notifyStepComplete\(5,\s*payload\);[\s\S]*return;[\s\S]*\}[\s\S]*await sendToContentScript\('signup-page'/i
+  );
+});
+
 test('step 5 completion is revalidated against the live auth page before the background accepts success', () => {
   const backgroundSource = readProjectFile('background.js');
 
@@ -540,11 +614,24 @@ test('step 5 background validation treats the platform welcome landing page as a
   );
   assert.match(
     backgroundSource,
-    /async function getSignupPageFallbackAuthState\(\) \{[\s\S]*const signupTabId = await getTabId\('signup-page'\);[\s\S]*const signupTab = await chrome\.tabs\.get\(signupTabId\)\.catch\(\(\) => null\);[\s\S]*if \(!isStableStep5SuccessUrl\(signupTab\?\.url\)\) \{[\s\S]*return null;[\s\S]*\}[\s\S]*isReachable:\s*true[\s\S]*url:\s*signupTab\.url/i
+    /async function getSignupPageFallbackAuthState\(\) \{[\s\S]*const signupTabId = await getTabId\('signup-page'\);[\s\S]*const signupTab = await chrome\.tabs\.get\(signupTabId\)\.catch\(\(\) => null\);[\s\S]*const signupUrl = String\(signupTab\?\.url \|\| ''\)\.trim\(\);[\s\S]*if \(!isStableStep5SuccessUrl\(signupUrl\)\) \{[\s\S]*return null;[\s\S]*\}[\s\S]*isReachable:\s*true[\s\S]*url:\s*signupUrl/i
   );
   assert.match(
     backgroundSource,
     /async function getSignupAuthPageState\(\) \{[\s\S]*catch \{[\s\S]*const fallbackState = await getSignupPageFallbackAuthState\(\);[\s\S]*if \(fallbackState\) \{[\s\S]*return fallbackState;[\s\S]*\}[\s\S]*return \{[\s\S]*isReachable:\s*false/i
+  );
+});
+
+test('signup auth fallback state also recognizes email-verification and about-you urls when the content script is temporarily unreachable', () => {
+  const backgroundSource = readProjectFile('background.js');
+
+  assert.match(
+    backgroundSource,
+    /async function getSignupPageFallbackAuthState\(\) \{[\s\S]*isCanonicalEmailVerificationUrl\(signupUrl\)[\s\S]*hasReadyVerificationPage:\s*true/i
+  );
+  assert.match(
+    backgroundSource,
+    /async function getSignupPageFallbackAuthState\(\) \{[\s\S]*isCanonicalAboutYouUrl\(signupUrl\)[\s\S]*hasReadyProfilePage:\s*true/i
   );
 });
 
@@ -562,6 +649,71 @@ test('step 4 and step 5 page-readiness checks consume the stronger auth-page sem
   assert.match(
     backgroundSource,
     /hasReadyVerificationPage:\s*false[\s\S]*hasReadyProfilePage:\s*false/i
+  );
+});
+
+test('step 4 and step 7 readiness checks short-circuit when the signup tab already reached the platform welcome create landing page', () => {
+  const backgroundSource = readProjectFile('background.js');
+
+  assert.match(
+    backgroundSource,
+    /async function ensureSignupPageReadyForVerification\(state,\s*step = 4\) \{[\s\S]*isStableStep5SuccessUrl\(pageState\?\.url\)[\s\S]*return state;/i
+  );
+});
+
+test('step 4 cautiously fast-paths a stable email-verification landing after consecutive checks instead of waiting for full copy stabilization', () => {
+  const backgroundSource = readProjectFile('background.js');
+
+  assert.match(
+    backgroundSource,
+    /let consecutiveVerificationShortcutSignals = 0;[\s\S]*isCanonicalEmailVerificationUrl\(pageState\?\.url\)\s*\|\|\s*pageState\?\.hasVisibleVerificationInput/i
+  );
+  assert.match(
+    backgroundSource,
+    /consecutiveVerificationShortcutSignals >= 2[\s\S]*return state;/i
+  );
+});
+
+test('step 5 cautiously fast-paths a stable about-you profile form only after repeated url-plus-input checks', () => {
+  const backgroundSource = readProjectFile('background.js');
+
+  assert.match(
+    backgroundSource,
+    /let consecutiveProfileShortcutSignals = 0;[\s\S]*isCanonicalAboutYouUrl\(pageState\?\.url\)[\s\S]*pageState\?\.hasVisibleProfileFormInput/i
+  );
+  assert.match(
+    backgroundSource,
+    /consecutiveProfileShortcutSignals >= 2[\s\S]*return \{ \.\.\.state,\s*\.\.\.pageState \};/i
+  );
+});
+
+test('step 4 and step 5 warn or error copy is Chinese-friendly while keeping debug details inline', () => {
+  const backgroundSource = readProjectFile('background.js');
+
+  assert.match(
+    backgroundSource,
+    /当前 auth 页面暂时无法访问，先等待验证页恢复响应后再查收邮件/i
+  );
+  assert.match(
+    backgroundSource,
+    /当前页面已经到达 https:\/\/platform\.openai\.com\/welcome\?step=create/i
+  );
+  assert.match(
+    backgroundSource,
+    /当前页面已进入 about-you 资料页，且输入框已连续两次可见/i
+  );
+  assert.match(
+    backgroundSource,
+    /调试：/i
+  );
+});
+
+test('step 4 unreachable timeout uses a dedicated error instead of claiming the flow is still on the credential form', () => {
+  const backgroundSource = readProjectFile('background.js');
+
+  assert.match(
+    backgroundSource,
+    /if \(lastPageState\?\.isReachable === false\) \{[\s\S]*Step \$\{step\} blocked: signup auth page stayed unreachable before the verification email step\./i
   );
 });
 
@@ -588,7 +740,7 @@ test('auto run phase 1 rethrows stop requests instead of downgrading them into w
 
   assert.match(
     backgroundSource,
-    /let emailReady = false;[\s\S]*try \{[\s\S]*const nextEmail = await fetchEmailAddress\(\{ generateNew: true \}\);[\s\S]*\} catch \(err\) \{[\s\S]*if \(isStopError\(err\)\) \{\s*throw err;\s*\}[\s\S]*auto-fetch failed: \$\{err\.message\}/i
+    /let emailReady = false;[\s\S]*try \{[\s\S]*const nextEmail = await fetchEmailAddress\(\{ generateNew: true \}\);[\s\S]*\} catch \(err\) \{[\s\S]*if \(isStopError\(err\)\) \{\s*throw err;\s*\}[\s\S]*自动取号失败：\$\{err\.message\}/i
   );
 });
 

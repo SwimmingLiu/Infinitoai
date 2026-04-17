@@ -41,7 +41,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       sendResponse({ ok: true, ...(result || {}) });
     }).catch(err => {
       if (isStopError(err)) {
-        log(`Step ${message.step}: Stopped by user.`, 'warn');
+        log(`第 ${message.step} 步：已由用户停止。`, 'warn');
         sendResponse({ stopped: true, error: err.message });
         return;
       }
@@ -75,7 +75,7 @@ async function step1_getOAuthLink() {
       const state = await chrome.runtime.sendMessage({ type: 'GET_STATE' }).catch(() => null);
       const fallbackUrl = String(state?.vpsUrl || '').trim();
       if (fallbackUrl && fallbackUrl !== location.href) {
-        log('Step 1: VPS returned 502. Re-opening the configured OAuth page instead of refreshing the error page...', 'warn');
+        log('第 1 步：VPS 返回 502，改为重新打开已配置的 OAuth 页面，而不是刷新错误页。', 'warn');
         location.href = fallbackUrl;
       }
       throw new Error('VPS panel returned 502 Bad Gateway. Re-opened the configured OAuth page. If it still fails, switch node or VPS and retry.');
@@ -96,7 +96,7 @@ async function step1_getOAuthLink() {
         );
       }
 
-      log(`Step 1: Codex OAuth card not ready on attempt ${attempt}. Refreshing the VPS page and retrying...`, 'warn');
+      log(`第 1 步：第 ${attempt} 次尝试时 Codex OAuth 卡片仍未就绪，准备刷新 VPS 页面后重试。`, 'warn');
       location.reload();
       await sleep(2500);
     }
@@ -131,7 +131,7 @@ async function step1_getOAuthLink() {
     throw new Error(`Invalid OAuth URL found: "${oauthUrl.slice(0, 50)}". Expected URL starting with http.`);
   }
 
-  log(`Step 1: OAuth URL obtained: ${oauthUrl.slice(0, 80)}...`, 'ok');
+  log(`第 1 步：已获取 OAuth URL：${oauthUrl.slice(0, 80)}...`, 'ok');
   reportComplete(1, { oauthUrl });
 }
 
@@ -196,14 +196,14 @@ async function step9_vpsVerify(payload) {
 
     const outcome = await waitForStep9Outcome();
     if (outcome.kind === 'success') {
-      log('Step 9: Authentication successful!', 'ok');
+      log('第 9 步：认证成功！', 'ok');
       reportComplete(9);
       return;
     }
 
     if (outcome.kind === 'transient_502') {
       if (attempt < maxSubmitAttempts) {
-        log(`Step 9: VPS callback submit hit 502 (${outcome.detail}). Retrying submit...`, 'warn');
+        log(`第 9 步：VPS 回调提交命中 502（${outcome.detail}），准备重试提交。`, 'warn');
         await sleep(1500);
         continue;
       }
@@ -215,7 +215,7 @@ async function step9_vpsVerify(payload) {
     }
 
     if (outcome.kind === 'auth_link_not_pending') {
-      log(`Step 9: VPS says the authorization link is no longer pending (${outcome.detail}). Requesting a fresh OAuth recovery...`, 'warn');
+      log(`第 9 步：VPS 提示授权链接已不再处于 pending 状态（${outcome.detail}），准备请求新的 OAuth 恢复流程。`, 'warn');
       return {
         retryWithFreshOauth: true,
         reason: 'auth_link_not_pending',
@@ -223,7 +223,7 @@ async function step9_vpsVerify(payload) {
       };
     }
 
-    log(`Step 9: Status after submit: "${outcome.detail}". May still be processing.`, 'warn');
+    log(`第 9 步：提交后的状态为“${outcome.detail}”，可能仍在处理中。`, 'warn');
     reportComplete(9);
     return;
   }

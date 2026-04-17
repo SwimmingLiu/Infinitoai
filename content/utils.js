@@ -289,8 +289,8 @@ function reportReady(payload = {}) {
  * @param {Object} data - Step output data
  */
 function reportComplete(step, data = {}) {
-  console.log(LOG_PREFIX, `Step ${step} completed`, data);
-  log(`Step ${step} completed successfully`, 'ok');
+  console.log(LOG_PREFIX, `第 ${step} 步执行完成`, data);
+  log(`第 ${step} 步执行完成`, 'ok');
   return chrome.runtime.sendMessage({
     type: 'STEP_COMPLETE',
     source: SCRIPT_SOURCE,
@@ -306,7 +306,7 @@ function reportComplete(step, data = {}) {
  * @param {string} errorMessage
  */
 function reportError(step, errorMessage) {
-  console.error(LOG_PREFIX, `Step ${step} failed: ${errorMessage}`);
+  console.error(LOG_PREFIX, `第 ${step} 步失败：${errorMessage}`);
   chrome.runtime.sendMessage({
     type: 'STEP_ERROR',
     source: SCRIPT_SOURCE,
