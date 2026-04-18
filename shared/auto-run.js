@@ -172,6 +172,32 @@
     return `${AUTO_RUN_LOG_SILENCE_ERROR_PREFIX}${timeoutLabel} without new logs. Last log${elapsedLabel}: ${summary}`;
   }
 
+  function getAutoRunWatchdogLastLogEntry(context = {}, fallbackEntry = null) {
+    const contextMessage = String(context?.lastLogMessage || '').trim();
+    if (contextMessage) {
+      const contextLevel = String(context?.lastLogLevel || '').trim().toLowerCase() || 'info';
+      const contextTimestamp = Number.isFinite(context?.lastLogTimestamp)
+        ? context.lastLogTimestamp
+        : 0;
+      return {
+        message: contextMessage,
+        level: contextLevel,
+        timestamp: contextTimestamp,
+      };
+    }
+
+    const fallbackMessage = String(fallbackEntry?.message || '').trim();
+    if (!fallbackMessage) {
+      return null;
+    }
+
+    return {
+      message: fallbackMessage,
+      level: String(fallbackEntry?.level || '').trim().toLowerCase() || 'info',
+      timestamp: Number.isFinite(fallbackEntry?.timestamp) ? fallbackEntry.timestamp : 0,
+    };
+  }
+
   function isAutoRunLogSilenceError(error) {
     return getErrorMessage(error).startsWith(AUTO_RUN_LOG_SILENCE_ERROR_PREFIX);
   }
@@ -214,6 +240,24 @@
   } = {}) {
     const normalizedPhase = String(phase || '').trim().toLowerCase();
     return normalizedPhase === 'waiting_email' && Boolean(infiniteMode);
+  }
+
+  function shouldRearmPersistentAutoRunWatchdogFromLog({
+    hasInMemoryWatchdog = false,
+    watchdogTriggered = false,
+    watchdogSuspended = false,
+    autoRunning = false,
+    persistentWatchdogPhase = '',
+  } = {}) {
+    if (Boolean(watchdogTriggered) || Boolean(watchdogSuspended)) {
+      return false;
+    }
+
+    if (Boolean(hasInMemoryWatchdog)) {
+      return true;
+    }
+
+    return Boolean(autoRunning) && String(persistentWatchdogPhase || '').trim().toLowerCase() === 'running';
   }
 
   function getAutoRunActiveWatchdogAlarmName() {
@@ -396,9 +440,11 @@
     getAutoRunActiveWatchdogAlarmName,
     getAutoRunPauseWatchdogAlarmName,
     getAutoRunPauseWatchdogDeadline,
+    getAutoRunWatchdogLastLogEntry,
     isAutoRunLogSilenceError,
     shouldContinueAutoRunAfterWatchdog,
     shouldStartNextInfiniteRunAfterManualFlow,
+    shouldRearmPersistentAutoRunWatchdogFromLog,
     shouldUsePersistentAutoRunPauseWatchdog,
     shouldSuspendAutoRunWatchdogDuringPause,
     shouldContinueAutoRunAfterError,
