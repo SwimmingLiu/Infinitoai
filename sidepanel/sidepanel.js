@@ -523,6 +523,18 @@ function formatAccountTimestamp(value) {
   if (Number.isNaN(parsed.getTime())) {
     return timestamp;
   }
+  const now = new Date();
+  if (
+    parsed.getFullYear() === now.getFullYear() &&
+    parsed.getMonth() === now.getMonth() &&
+    parsed.getDate() === now.getDate()
+  ) {
+    return parsed.toLocaleTimeString('zh-CN', {
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false,
+    });
+  }
   return parsed.toLocaleDateString('zh-CN', {
     year: 'numeric',
     month: '2-digit',

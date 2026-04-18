@@ -237,6 +237,17 @@ test('side panel shows date-only account timestamps, removes the updated column,
   assert.doesNotMatch(css, /\.account-cell-raw\s*\{[\s\S]*width:\s*100%;/);
 });
 
+test('side panel shows account timestamps as hh:mm for today and keeps date-only output for earlier days', () => {
+  const source = readSidepanelSource();
+
+  assert.match(source, /const now = new Date\(\);/);
+  assert.match(source, /parsed\.getFullYear\(\) === now\.getFullYear\(\)/);
+  assert.match(source, /parsed\.getMonth\(\) === now\.getMonth\(\)/);
+  assert.match(source, /parsed\.getDate\(\) === now\.getDate\(\)/);
+  assert.match(source, /return parsed\.toLocaleTimeString\('zh-CN',\s*\{[\s\S]*hour:\s*'2-digit'[\s\S]*minute:\s*'2-digit'[\s\S]*hour12:\s*false[\s\S]*\}\);/);
+  assert.match(source, /return parsed\.toLocaleDateString\('zh-CN',\s*\{[\s\S]*year:\s*'numeric'[\s\S]*month:\s*'2-digit'[\s\S]*day:\s*'2-digit'[\s\S]*\}\);/);
+});
+
 test('side panel lets account cells copy their full value on click', () => {
   const source = readSidepanelSource();
 
