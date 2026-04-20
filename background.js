@@ -98,6 +98,7 @@ const {
   PERSISTED_TOP_SETTING_KEYS,
   DEFAULT_EMAIL_SOURCE: DEFAULT_PERSISTED_EMAIL_SOURCE,
   normalizePersistentSettings,
+  sanitizeAccountSuccessOnly,
   sanitizeAutoRunCount,
   sanitizeAutoRotateMailProvider,
   sanitizeEmailSource: sanitizePersistedEmailSource,
@@ -286,6 +287,7 @@ const DEFAULT_STATE = {
   tabRegistry: {},
   ...buildInitialLogState(),
   vpsUrl: '',
+  vpsCpaPassword: '',
   customPassword: '',
   mailProvider: '163', // 'qq' or '163'
   inbucketHost: '',
@@ -1942,6 +1944,7 @@ async function handleMessage(message, sender) {
       let nextTmailorDomainMode = undefined;
 
       if (message.payload.vpsUrl !== undefined) persistentUpdates.vpsUrl = message.payload.vpsUrl;
+      if (message.payload.vpsCpaPassword !== undefined) persistentUpdates.vpsCpaPassword = message.payload.vpsCpaPassword;
       if (message.payload.customPassword !== undefined) sessionUpdates.customPassword = message.payload.customPassword;
       if (message.payload.mailProvider !== undefined) persistentUpdates.mailProvider = message.payload.mailProvider;
       if (message.payload.emailSource !== undefined) persistentUpdates.emailSource = sanitizePersistedEmailSource(message.payload.emailSource);
@@ -1951,6 +1954,7 @@ async function handleMessage(message, sender) {
       if (message.payload.autoRunCount !== undefined) persistentUpdates.autoRunCount = sanitizeAutoRunCount(message.payload.autoRunCount);
       if (message.payload.autoRunInfinite !== undefined) persistentUpdates.autoRunInfinite = sanitizeInfiniteAutoRun(message.payload.autoRunInfinite);
       if (message.payload.autoRotateMailProvider !== undefined) persistentUpdates.autoRotateMailProvider = sanitizeAutoRotateMailProvider(message.payload.autoRotateMailProvider);
+      if (message.payload.accountSuccessOnly !== undefined) persistentUpdates.accountSuccessOnly = sanitizeAccountSuccessOnly(message.payload.accountSuccessOnly);
       if (message.payload.tmailorDomainMode !== undefined) nextTmailorDomainMode = message.payload.tmailorDomainMode;
 
       if (Object.keys(sessionUpdates).length > 0) {
@@ -1960,6 +1964,20 @@ async function handleMessage(message, sender) {
         const nextSettings = await setPersistentSettings(persistentUpdates);
         if (persistentUpdates.mailProvider !== undefined) {
           broadcastDataUpdate({ mailProvider: nextSettings.mailProvider });
+        }
+        if (persistentUpdates.accountSuccessOnly !== undefined) {
+          const state = await getState();
+          const nextAccountRecords = await setPersistentAccountRecords(state.accountRecords, {
+            successOnly: nextSettings.accountSuccessOnly,
+          });
+          const nextCurrentAccountRecordId = nextAccountRecords.some((record) => record.id === state.currentAccountRecordId)
+            ? state.currentAccountRecordId
+            : null;
+          await setState({ currentAccountRecordId: nextCurrentAccountRecordId });
+          broadcastDataUpdate({
+            accountSuccessOnly: nextSettings.accountSuccessOnly,
+            accountRecords: nextAccountRecords,
+          });
         }
       }
       if (nextTmailorDomainMode !== undefined) {

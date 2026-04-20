@@ -3,6 +3,7 @@ const assert = require('node:assert/strict');
 
 const {
   buildTopSettingPayload,
+  DEFAULT_ACCOUNT_SUCCESS_ONLY,
   DEFAULT_AUTO_RUN_COUNT,
   DEFAULT_AUTO_RUN_INFINITE,
   DEFAULT_AUTO_ROTATE_MAIL_PROVIDER,
@@ -56,6 +57,7 @@ test('normalizePersistentSettings returns only persisted top-bar settings', () =
   assert.deepEqual(
     normalizePersistentSettings({
       vpsUrl: 'http://127.0.0.1:3000',
+      vpsCpaPassword: 'secret-key',
       mailProvider: 'inbucket',
       emailSource: '33mail',
       mailDomainSettings: {
@@ -67,10 +69,12 @@ test('normalizePersistentSettings returns only persisted top-bar settings', () =
       autoRunCount: '8',
       autoRunInfinite: 'true',
       autoRotateMailProvider: 'true',
+      accountSuccessOnly: false,
       customPassword: 'should-not-be-here',
     }),
     {
       vpsUrl: 'http://127.0.0.1:3000',
+      vpsCpaPassword: 'secret-key',
       mailProvider: 'inbucket',
       emailSource: '33mail',
       mailDomainSettings: {
@@ -83,6 +87,7 @@ test('normalizePersistentSettings returns only persisted top-bar settings', () =
       autoRunCount: 8,
       autoRunInfinite: true,
       autoRotateMailProvider: true,
+      accountSuccessOnly: false,
     }
   );
 
@@ -90,6 +95,7 @@ test('normalizePersistentSettings returns only persisted top-bar settings', () =
     normalizePersistentSettings({}),
     {
       vpsUrl: '',
+      vpsCpaPassword: '',
       mailProvider: '163',
       emailSource: DEFAULT_EMAIL_SOURCE,
       mailDomainSettings: {
@@ -102,12 +108,13 @@ test('normalizePersistentSettings returns only persisted top-bar settings', () =
       autoRunCount: DEFAULT_AUTO_RUN_COUNT,
       autoRunInfinite: DEFAULT_AUTO_RUN_INFINITE,
       autoRotateMailProvider: DEFAULT_AUTO_ROTATE_MAIL_PROVIDER,
+      accountSuccessOnly: DEFAULT_ACCOUNT_SUCCESS_ONLY,
     }
   );
 
   assert.deepEqual(
     PERSISTED_TOP_SETTING_KEYS,
-    ['vpsUrl', 'mailProvider', 'emailSource', 'mailDomainSettings', 'inbucketHost', 'inbucketMailbox', 'autoRunCount', 'autoRunInfinite', 'autoRotateMailProvider']
+    ['vpsUrl', 'vpsCpaPassword', 'mailProvider', 'emailSource', 'mailDomainSettings', 'inbucketHost', 'inbucketMailbox', 'autoRunCount', 'autoRunInfinite', 'autoRotateMailProvider', 'accountSuccessOnly']
   );
 });
 
@@ -115,6 +122,7 @@ test('buildTopSettingPayload keeps the current email source and related settings
   assert.deepEqual(
     buildTopSettingPayload({
       vpsUrl: ' https://panel.example.com ',
+      vpsCpaPassword: ' secret-key ',
       mailProvider: 'qq',
       emailSource: 'tmailor',
       mailDomainSettings: {
@@ -126,9 +134,11 @@ test('buildTopSettingPayload keeps the current email source and related settings
       autoRunCount: '6',
       autoRunInfinite: 'true',
       autoRotateMailProvider: 'false',
+      accountSuccessOnly: false,
     }),
     {
       vpsUrl: 'https://panel.example.com',
+      vpsCpaPassword: 'secret-key',
       mailProvider: 'qq',
       emailSource: 'tmailor',
       mailDomainSettings: {
@@ -141,6 +151,7 @@ test('buildTopSettingPayload keeps the current email source and related settings
       autoRunCount: 6,
       autoRunInfinite: true,
       autoRotateMailProvider: false,
+      accountSuccessOnly: false,
     }
   );
 });

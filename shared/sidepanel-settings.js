@@ -10,10 +10,12 @@
   const DEFAULT_AUTO_RUN_COUNT = 1;
   const DEFAULT_AUTO_RUN_INFINITE = false;
   const DEFAULT_AUTO_ROTATE_MAIL_PROVIDER = false;
+  const DEFAULT_ACCOUNT_SUCCESS_ONLY = true;
   const DEFAULT_MAIL_PROVIDER = '163';
   const DEFAULT_EMAIL_SOURCE = 'tmailor';
   const PERSISTED_TOP_SETTING_KEYS = [
     'vpsUrl',
+    'vpsCpaPassword',
     'mailProvider',
     'emailSource',
     'mailDomainSettings',
@@ -22,6 +24,7 @@
     'autoRunCount',
     'autoRunInfinite',
     'autoRotateMailProvider',
+    'accountSuccessOnly',
   ];
 
   function sanitizeAutoRunCount(value) {
@@ -53,6 +56,18 @@
     return Boolean(value);
   }
 
+  function sanitizeAccountSuccessOnly(value) {
+    if (typeof value === 'string') {
+      const normalized = value.trim().toLowerCase();
+      if (normalized === 'true') return true;
+      if (normalized === 'false' || normalized === '') return false;
+    }
+    if (value === undefined || value === null) {
+      return DEFAULT_ACCOUNT_SUCCESS_ONLY;
+    }
+    return Boolean(value);
+  }
+
   function sanitizeMailProvider(value) {
     return value === 'qq' || value === '163' || value === 'inbucket'
       ? value
@@ -80,6 +95,7 @@
   function normalizePersistentSettings(value = {}) {
     return {
       vpsUrl: typeof value.vpsUrl === 'string' ? value.vpsUrl : '',
+      vpsCpaPassword: typeof value.vpsCpaPassword === 'string' ? value.vpsCpaPassword : '',
       mailProvider: sanitizeMailProvider(value.mailProvider),
       emailSource: sanitizeEmailSource(value.emailSource),
       mailDomainSettings: normalizeMailDomainSettings(value.mailDomainSettings),
@@ -88,6 +104,7 @@
       autoRunCount: sanitizeAutoRunCount(value.autoRunCount),
       autoRunInfinite: sanitizeInfiniteAutoRun(value.autoRunInfinite),
       autoRotateMailProvider: sanitizeAutoRotateMailProvider(value.autoRotateMailProvider),
+      accountSuccessOnly: sanitizeAccountSuccessOnly(value.accountSuccessOnly),
     };
   }
 
@@ -96,6 +113,7 @@
     return {
       ...normalized,
       vpsUrl: normalized.vpsUrl.trim(),
+      vpsCpaPassword: normalized.vpsCpaPassword.trim(),
       inbucketHost: normalized.inbucketHost.trim(),
       inbucketMailbox: normalized.inbucketMailbox.trim(),
     };
@@ -146,11 +164,13 @@
     DEFAULT_AUTO_RUN_COUNT,
     DEFAULT_AUTO_RUN_INFINITE,
     DEFAULT_AUTO_ROTATE_MAIL_PROVIDER,
+    DEFAULT_ACCOUNT_SUCCESS_ONLY,
     DEFAULT_EMAIL_SOURCE,
     PERSISTED_TOP_SETTING_KEYS,
     getAutoContinueHint,
     getEmailInputPlaceholder,
     normalizePersistentSettings,
+    sanitizeAccountSuccessOnly,
     sanitizeAutoRunCount,
     sanitizeAutoRotateMailProvider,
     sanitizeEmailSource,
