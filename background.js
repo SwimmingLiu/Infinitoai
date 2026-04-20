@@ -814,6 +814,42 @@ async function getTabRegistry() {
   return await ensureTabRegistryRecovered();
 }
 
+async function closeAutoRunRoundTabs() {
+  const sourcesToClose = [
+    'signup-page',
+    'qq-mail',
+    'mail-163',
+    'duck-mail',
+    'tmailor-mail',
+    'inbucket-mail',
+  ];
+  const registry = await getTabRegistry();
+  const nextRegistry = { ...registry };
+  const tabIdsToClose = [];
+
+  for (const source of sourcesToClose) {
+    const tabId = nextRegistry[source]?.tabId;
+    if (!Number.isFinite(tabId)) {
+      delete nextRegistry[source];
+      continue;
+    }
+    tabIdsToClose.push(tabId);
+    delete nextRegistry[source];
+  }
+
+  await setState({ tabRegistry: nextRegistry });
+
+  if (!tabIdsToClose.length) {
+    return;
+  }
+
+  try {
+    await chrome.tabs.remove(tabIdsToClose);
+  } catch (err) {
+    console.warn(LOG_PREFIX, 'Failed to close prior auto-run signup/mail tabs:', err?.message || err);
+  }
+}
+
 async function registerTab(source, tabId) {
   const state = await getState();
   const registry = state.tabRegistry || {};
@@ -3547,6 +3583,7 @@ async function autoRunLoop(totalRuns, infiniteMode = false, options = {}) {
         mailProviderUsage: pruneMailProviderUsage(prevState.mailProviderUsage),
         autoRunning: true,
       };
+      await closeAutoRunRoundTabs();
       await resetState({ preserveLogHistory: true });
       await setState(keepSettings);
       await startNewLogRound(`Run ${runTargetText}`);

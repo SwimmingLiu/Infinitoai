@@ -1029,6 +1029,19 @@ test('infinite auto run keeps per-run reset and log-round setup inside the retry
   );
 });
 
+test('auto run closes signup and mailbox tabs at each round boundary before rebuilding the run state', () => {
+  const backgroundSource = readProjectFile('background.js');
+
+  assert.match(
+    backgroundSource,
+    /async function closeAutoRunRoundTabs\(\) \{[\s\S]*'signup-page'[\s\S]*'qq-mail'[\s\S]*'mail-163'[\s\S]*'duck-mail'[\s\S]*'tmailor-mail'[\s\S]*'inbucket-mail'[\s\S]*chrome\.tabs\.remove/i
+  );
+  assert.match(
+    backgroundSource,
+    /const keepSettings = \{[\s\S]*\};[\s\S]*await closeAutoRunRoundTabs\(\);[\s\S]*await resetState\(\{\s*preserveLogHistory:\s*true\s*\}\);/i
+  );
+});
+
 test('auto run phase 2 uses a distinct email-source binding after the per-run setup block', () => {
   const backgroundSource = readProjectFile('background.js');
 
