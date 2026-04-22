@@ -2,6 +2,8 @@ node_modules/
 coverage/
 dist/
 docs/plans/
+playwright-report/
+test-results/
 
 .DS_Store
 Thumbs.db

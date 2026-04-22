@@ -4,7 +4,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 
-function loadUtilsContext() {
+function loadUtilsContext(overrides = {}) {
   const sentMessages = [];
   const listeners = [];
   const context = {
@@ -63,6 +63,7 @@ function loadUtilsContext() {
     Date,
     setTimeout,
     clearTimeout,
+    ...overrides,
   };
 
   context.window = context;
@@ -76,6 +77,24 @@ function loadUtilsContext() {
   vm.runInContext(code, context, { filename: scriptPath });
 
   return context;
+}
+
+async function collectUnhandledRejections(run) {
+  const reasons = [];
+  const handler = (reason) => {
+    reasons.push(reason);
+  };
+
+  process.on('unhandledRejection', handler);
+  try {
+    run();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await new Promise((resolve) => setImmediate(resolve));
+  } finally {
+    process.off('unhandledRejection', handler);
+  }
+
+  return reasons;
 }
 
 test('reportError emits step error without a duplicate LOG message', () => {
@@ -124,6 +143,22 @@ test('reportComplete returns the runtime delivery promise for navigation-sensiti
 
   resolveDelivery({ ok: true });
   await reportPromise;
+});
+
+test('fire-and-forget runtime messages ignore transient receiving-end disconnects during extension reload', async () => {
+  const disconnectedError = new Error('Could not establish connection. Receiving end does not exist.');
+  const context = loadUtilsContext();
+  context.chrome.runtime.sendMessage = () => Promise.reject(disconnectedError);
+
+  context.__sentMessages.length = 0;
+
+  const rejections = await collectUnhandledRejections(() => {
+    context.log('still loading');
+    context.reportReady();
+    context.reportError(7, 'Phone verification required');
+  });
+
+  assert.equal(rejections.length, 0);
 });
 
 test('simulateClick prefers the element native click handler when available', () => {

@@ -621,3 +621,71 @@ node .\tests\tmailor-domains.test.js
 node .\tests\signup-page-verification.test.js
 node .\tests\vps-panel.test.js
 ```
+
+## Playwright Testing
+
+仓库现在额外提供了两层 Playwright 测试：
+
+- `local-extension`
+  - 本地稳定扩展回归
+  - 验证 unpacked extension 加载、service worker 存活、Side Panel 关键控件和截图回归
+- `real-flow`
+  - 真实 OpenAI / 邮箱 / OAuth 场景
+  - 默认不运行，只有在提供真实环境变量时才启用
+
+### Install
+
+```powershell
+npm install
+npx playwright install chromium
+```
+
+### Local Extension Regression
+
+```powershell
+npm run test:e2e
+```
+
+### Update Visual Baselines
+
+```powershell
+npm run test:e2e:update
+```
+
+截图基线会写入仓库内的 Playwright snapshot 目录，应当和测试一起维护，而不是作为临时运行产物忽略掉。
+
+### Real Flow E2E
+
+先设置真实环境变量，再执行：
+
+```powershell
+$env:PW_REAL_E2E = "1"
+$env:PW_REAL_VPS_URL = "https://your-panel.example.com/management.html#/oauth"
+$env:PW_REAL_VPS_CPA_PASSWORD = "your-management-key"
+$env:PW_REAL_EMAIL_SOURCE = "tmailor"
+$env:PW_REAL_MAIL_PROVIDER = "inbucket"
+$env:PW_REAL_INBUCKET_HOST = "https://your-inbucket-host"
+$env:PW_REAL_INBUCKET_MAILBOX = "your-mailbox"
+npm run test:e2e:real
+```
+
+当前真实链路建议优先使用可控测试环境：
+
+- `Inbucket`：首选，最适合作为受控邮箱环境
+- `TMailor`：可用于公开真实链路，但更容易受到 Cloudflare / captcha 波动影响
+- `QQ / 163`：可继续支持，但不建议作为首批默认真实 e2e 主链
+
+如果没有提供所需 `PW_REAL_*` 变量，`real-flow` project 会明确跳过，而不是伪装成已经通过。
+
+### Combined Default Verification
+
+```powershell
+npm run test:all
+```
+
+这个命令当前会执行：
+
+- 与本次扩展加载 / Side Panel / 消息发送修复直接相关的核心 Node 回归
+- `local-extension` Playwright 回归
+
+仓库里其余历史 Node 测试仍然可以单独运行，但由于当前主分支已有若干与本次 Playwright 基座无关的历史失败项，它们没有被直接并入默认 `test:all`。
