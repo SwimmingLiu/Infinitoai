@@ -259,8 +259,32 @@ function fillSelect(el, value) {
  * @param {string} message
  * @param {string} level - 'info' | 'ok' | 'warn' | 'error'
  */
+function isIgnorableRuntimeMessageError(error) {
+  const text = typeof error === 'string' ? error : error?.message || '';
+  return /could not establish connection\.\s*receiving end does not exist|message channel closed before a response was received|message channel is closed|extension context invalidated/i.test(text);
+}
+
+function sendRuntimeMessageSafely(message) {
+  try {
+    const delivery = chrome.runtime.sendMessage(message);
+    if (delivery && typeof delivery.catch === 'function') {
+      delivery.catch((error) => {
+        if (!isIgnorableRuntimeMessageError(error)) {
+          console.error(LOG_PREFIX, 'Runtime message failed:', error?.message || error);
+        }
+      });
+    }
+    return delivery;
+  } catch (error) {
+    if (!isIgnorableRuntimeMessageError(error)) {
+      throw error;
+    }
+    return null;
+  }
+}
+
 function log(message, level = 'info') {
-  chrome.runtime.sendMessage({
+  sendRuntimeMessageSafely({
     type: 'LOG',
     source: SCRIPT_SOURCE,
     step: null,
@@ -274,7 +298,7 @@ function log(message, level = 'info') {
  */
 function reportReady(payload = {}) {
   console.log(LOG_PREFIX, 'Content script ready');
-  chrome.runtime.sendMessage({
+  sendRuntimeMessageSafely({
     type: 'CONTENT_SCRIPT_READY',
     source: SCRIPT_SOURCE,
     step: null,
@@ -307,7 +331,7 @@ function reportComplete(step, data = {}) {
  */
 function reportError(step, errorMessage) {
   console.error(LOG_PREFIX, `第 ${step} 步失败：${errorMessage}`);
-  chrome.runtime.sendMessage({
+  sendRuntimeMessageSafely({
     type: 'STEP_ERROR',
     source: SCRIPT_SOURCE,
     step,
