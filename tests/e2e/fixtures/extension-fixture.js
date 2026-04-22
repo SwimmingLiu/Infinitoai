@@ -21,7 +21,6 @@ function resolveBrowserLaunchOptions() {
   }
 
   return {
-    channel: 'chromium',
     headless: false,
   };
 }
@@ -39,16 +38,17 @@ const test = base.extend({
     const extensionPath = path.resolve(__dirname, '..', '..', '..');
     const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'infinitoai-playwright-'));
     const launchOptions = resolveBrowserLaunchOptions();
-
-    const context = await chromium.launchPersistentContext(userDataDir, {
-      ...launchOptions,
-      args: [
-        `--disable-extensions-except=${extensionPath}`,
-        `--load-extension=${extensionPath}`,
-      ],
-    });
+    let context = null;
 
     try {
+      context = await chromium.launchPersistentContext(userDataDir, {
+        ...launchOptions,
+        args: [
+          `--disable-extensions-except=${extensionPath}`,
+          `--load-extension=${extensionPath}`,
+        ],
+      });
+
       const serviceWorker = await waitForServiceWorker(context);
       const extensionId = new URL(serviceWorker.url()).host;
 
@@ -73,10 +73,15 @@ const test = base.extend({
         },
       });
     } finally {
-      await context.close();
-      fs.rmSync(userDataDir, { recursive: true, force: true });
+      try {
+        if (context) {
+          await context.close();
+        }
+      } finally {
+        fs.rmSync(userDataDir, { recursive: true, force: true });
+      }
     }
   },
 });
 
-module.exports = { test, expect };
+module.exports = { test, expect, resolveBrowserLaunchOptions };

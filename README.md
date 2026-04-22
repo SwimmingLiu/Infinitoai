@@ -652,7 +652,7 @@ npm run test:e2e
 npm run test:e2e:update
 ```
 
-截图基线会写入仓库内的 Playwright snapshot 目录，应当和测试一起维护，而不是作为临时运行产物忽略掉。
+截图基线会写入仓库内的 Playwright snapshot 目录，应当和测试一起维护，而不是作为临时运行产物忽略掉。当前仓库首批视觉基线按 Windows 平台维护，非 Windows 平台会跳过该截图断言。
 
 ### Real Flow E2E
 

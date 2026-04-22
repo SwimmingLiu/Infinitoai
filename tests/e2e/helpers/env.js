@@ -7,7 +7,7 @@ function getRealFlowConfig() {
     vpsUrl: String(process.env.PW_REAL_VPS_URL || '').trim(),
     vpsPassword: String(process.env.PW_REAL_VPS_CPA_PASSWORD || '').trim(),
     emailSource: String(process.env.PW_REAL_EMAIL_SOURCE || 'tmailor').trim(),
-    mailProvider: String(process.env.PW_REAL_MAIL_PROVIDER || 'inbucket').trim(),
+    mailProvider: String(process.env.PW_REAL_MAIL_PROVIDER || '163').trim(),
     inbucketHost: String(process.env.PW_REAL_INBUCKET_HOST || '').trim(),
     inbucketMailbox: String(process.env.PW_REAL_INBUCKET_MAILBOX || '').trim(),
   };
@@ -28,11 +28,13 @@ function getMissingRealFlowConfig(config = getRealFlowConfig()) {
     missing.push('PW_REAL_EMAIL_SOURCE(valid: tmailor, duck, 33mail)');
   }
 
-  if (config.emailSource !== 'tmailor' && !ALLOWED_MAIL_PROVIDERS.has(config.mailProvider)) {
+  const usesMailProvider = config.emailSource !== 'tmailor';
+
+  if (usesMailProvider && !ALLOWED_MAIL_PROVIDERS.has(config.mailProvider)) {
     missing.push('PW_REAL_MAIL_PROVIDER(valid: 163, qq, inbucket)');
   }
 
-  if (config.mailProvider === 'inbucket') {
+  if (usesMailProvider && config.mailProvider === 'inbucket') {
     if (!config.inbucketHost) {
       missing.push('PW_REAL_INBUCKET_HOST');
     }

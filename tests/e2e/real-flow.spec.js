@@ -8,6 +8,7 @@ test.describe('real flow', () => {
 
   test('runs the real sidepanel flow up to a verifiable oauth milestone', async ({ extension }) => {
     const config = getRealFlowConfig();
+    const usesMailProvider = config.emailSource !== 'tmailor';
     const page = await prepareSidepanelPage(extension);
 
     await page.fill('#input-vps-url', config.vpsUrl);
@@ -18,13 +19,12 @@ test.describe('real flow', () => {
 
     await page.selectOption('#select-email-source', config.emailSource);
 
-    if (config.emailSource !== 'tmailor') {
+    if (usesMailProvider) {
       await page.selectOption('#select-mail-provider', config.mailProvider);
-    }
-
-    if (config.mailProvider === 'inbucket') {
-      await page.fill('#input-inbucket-host', config.inbucketHost);
-      await page.fill('#input-inbucket-mailbox', config.inbucketMailbox);
+      if (config.mailProvider === 'inbucket') {
+        await page.fill('#input-inbucket-host', config.inbucketHost);
+        await page.fill('#input-inbucket-mailbox', config.inbucketMailbox);
+      }
     }
 
     await page.locator('.step-btn[data-step="1"]').click();

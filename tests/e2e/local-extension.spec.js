@@ -16,6 +16,8 @@ test('renders the sidepanel shell with core controls', async ({ extension }) => 
 });
 
 test('toggles source specific sections and keeps the stable panel form visually unchanged', async ({ extension }) => {
+  test.skip(process.platform !== 'win32', 'Visual snapshot baseline is currently maintained on Windows only.');
+
   const page = await prepareSidepanelPage(extension);
 
   await page.selectOption('#select-email-source', '33mail');

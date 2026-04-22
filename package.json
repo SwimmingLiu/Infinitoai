@@ -4,7 +4,7 @@
   "version": "0.0.0",
   "scripts": {
     "playwright:tmailor:debug": "node tools/playwright-tmailor-debug.js",
-    "test:unit": "node --test tests/background-syntax.test.js tests/content-script-idempotency.test.js tests/content-utils-errors.test.js tests/manifest.test.js",
+    "test:unit": "node --test tests/background-syntax.test.js tests/content-script-idempotency.test.js tests/content-utils-errors.test.js tests/manifest.test.js tests/playwright-env.test.js tests/playwright-fixture.test.js",
     "test:e2e": "playwright test --project=local-extension",
     "test:e2e:real": "playwright test --project=real-flow",
     "test:e2e:update": "playwright test --project=local-extension --update-snapshots",
