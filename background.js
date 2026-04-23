@@ -82,7 +82,7 @@ const {
   isTmailorApiCaptchaCooldownActive,
   pollTmailorVerificationCode,
 } = TmailorApi;
-const { buildReclaimableTabRegistry, shouldPrepareSameUrlTabForReuse, shouldReuseActiveTabOnCreate } = TabReclaim;
+const { buildReclaimableTabRegistry, pickAutomationWindowId, shouldPrepareSameUrlTabForReuse, shouldReuseActiveTabOnCreate } = TabReclaim;
 const {
   buildStep8RedirectHeartbeatMessage,
   getMailTabOpenUrlForStep,
@@ -239,27 +239,45 @@ function getNormalizedLogHistory(state = {}) {
   };
 }
 
-async function ensureAutomationWindowId() {
-  if (automationWindowId != null) {
-    try {
-      await chrome.windows.get(automationWindowId);
-      return automationWindowId;
-    } catch {
-      automationWindowId = null;
+async function getFocusedNormalWindowId() {
+  try {
+    const focusedWindow = await chrome.windows.getLastFocused({
+      populate: false,
+      windowTypes: ['normal'],
+    });
+    if (Number.isFinite(focusedWindow?.id)) {
+      return focusedWindow.id;
     }
-  }
+  } catch {}
+
+  const fallbackWindow = await chrome.windows.getLastFocused();
+  return Number.isFinite(fallbackWindow?.id) ? fallbackWindow.id : null;
+}
+
+async function ensureAutomationWindowId(source = '') {
   const registry = await getTabRegistry();
-  for (const entry of Object.values(registry)) {
-    if (entry.tabId) {
-      try {
-        const tab = await chrome.tabs.get(entry.tabId);
-        automationWindowId = tab.windowId;
-        return automationWindowId;
-      } catch {}
-    }
+  let sourceWindowId = null;
+  const sourceEntry = source ? registry[source] : null;
+  if (sourceEntry?.tabId) {
+    try {
+      const sourceTab = await chrome.tabs.get(sourceEntry.tabId);
+      sourceWindowId = sourceTab.windowId;
+    } catch {}
   }
-  const win = await chrome.windows.getLastFocused();
-  automationWindowId = win.id;
+
+  const focusedWindowId = await getFocusedNormalWindowId();
+  const nextWindowId = pickAutomationWindowId({
+    sourceWindowId,
+    focusedWindowId,
+    cachedWindowId: automationWindowId,
+  });
+
+  if (Number.isFinite(nextWindowId)) {
+    automationWindowId = nextWindowId;
+    return automationWindowId;
+  }
+
+  automationWindowId = null;
   return automationWindowId;
 }
 
@@ -1244,7 +1262,7 @@ async function reuseOrCreateTab(source, url, options = {}) {
   }
 
   // Create new tab in the automation window
-  const wid = await ensureAutomationWindowId();
+  const wid = await ensureAutomationWindowId(source);
   if (shouldReuseActiveTabOnCreate(source, options)) {
     const reusableActiveTab = await findReusableActiveTabForSource(source, wid);
     if (reusableActiveTab) {
@@ -6276,7 +6294,7 @@ async function executeStep9(state) {
 
   if (!alive) {
     // Create new tab in the automation window
-    const wid = await ensureAutomationWindowId();
+    const wid = await ensureAutomationWindowId('vps-panel');
     const tab = await chrome.tabs.create({ url: effectiveState.vpsUrl, active: true, windowId: wid });
     tabId = tab.id;
     await new Promise(resolve => {
