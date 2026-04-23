@@ -8,6 +8,7 @@
   root.EmailAddresses = exports;
 })(typeof globalThis !== 'undefined' ? globalThis : self, function() {
   const DEFAULT_EMAIL_SOURCE = 'tmailor';
+  const DEFAULT_2925_SUFFIX_LENGTH = 4;
   const DEFAULT_33MAIL_DOMAIN_SETTINGS = Object.freeze({
     '163': { emailDomain: '' },
     qq: { emailDomain: '' },
@@ -15,7 +16,7 @@
   });
 
   function sanitizeEmailSource(value) {
-    return value === '33mail' || value === 'duck' || value === 'tmailor'
+    return value === '33mail' || value === 'duck' || value === '2925' || value === 'tmailor'
       ? value
       : DEFAULT_EMAIL_SOURCE;
   }
@@ -30,6 +31,16 @@
 
   function normalizeEmailDomain(domain) {
     return String(domain || '').trim().replace(/^@+/, '').toLowerCase();
+  }
+
+  function normalize2925Prefix(value) {
+    return String(value || '')
+      .trim()
+      .toLowerCase()
+      .replace(/@2925\.com$/i, '')
+      .replace(/[^a-z0-9._-]+/g, '')
+      .replace(/_+/g, '_')
+      .replace(/^[._-]+|[._-]+$/g, '');
   }
 
   function normalize33MailDomainSettings(value = {}) {
@@ -79,13 +90,35 @@
     return `${localPart}@${normalizedDomain}`;
   }
 
+  function generate2925Address(prefix, options = {}) {
+    const normalizedPrefix = normalize2925Prefix(prefix);
+    if (!normalizedPrefix) {
+      throw new Error('No 2925 prefix configured. Enter the 2925 prefix in the side panel first.');
+    }
+
+    const randomFn = typeof options.randomFn === 'function' ? options.randomFn : Math.random;
+    const suffixLength = Number.isFinite(options.suffixLength) && options.suffixLength > 0
+      ? Math.floor(options.suffixLength)
+      : DEFAULT_2925_SUFFIX_LENGTH;
+    const alphabet = 'abcdefghijklmnopqrstuvwxyz0123456789';
+
+    let suffix = '';
+    for (let index = 0; index < suffixLength; index += 1) {
+      suffix += alphabet[Math.floor(randomFn() * alphabet.length)];
+    }
+
+    return `${normalizedPrefix}_${suffix}@2925.com`;
+  }
+
   return {
     DEFAULT_EMAIL_SOURCE,
     DEFAULT_33MAIL_DOMAIN_SETTINGS,
     createDefault33MailDomainSettings,
     generate33MailAddress,
+    generate2925Address,
     get33MailDomainForProvider,
     normalize33MailDomainSettings,
+    normalize2925Prefix,
     normalizeEmailDomain,
     sanitizeEmailSource,
   };
