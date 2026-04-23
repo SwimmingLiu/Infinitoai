@@ -95,6 +95,20 @@
     },
     {
       "matches": [
+        "https://2925.com/*"
+      ],
+      "js": [
+        "shared/mail-matching.js",
+        "shared/mail-freshness.js",
+        "shared/latest-mail.js",
+        "content/utils.js",
+        "content/mail-2925.js"
+      ],
+      "all_frames": true,
+      "run_at": "document_idle"
+    },
+    {
+      "matches": [
         "https://duckduckgo.com/email/settings/autofill*"
       ],
       "js": [

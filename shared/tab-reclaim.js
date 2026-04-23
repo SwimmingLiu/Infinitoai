@@ -62,6 +62,10 @@
     return parsed.hostname === 'tmailor.com';
   }
 
+  function isMail2925Url(parsed) {
+    return parsed.hostname === '2925.com';
+  }
+
   function isInbucketMailboxUrl(parsed, settings) {
     const expectedOrigin = normalizeOrigin(settings?.inbucketHost);
     const expectedMailbox = String(settings?.inbucketMailbox || '').trim();
@@ -94,6 +98,7 @@
     if (isMail163Url(parsed)) return 'mail-163';
     if (isDuckMailUrl(parsed)) return 'duck-mail';
     if (isTmailorUrl(parsed)) return 'tmailor-mail';
+    if (isMail2925Url(parsed)) return 'mail-2925';
     if (isInbucketMailboxUrl(parsed, settings)) return 'inbucket-mail';
     if (isVpsPanelUrl(parsed, settings)) return 'vps-panel';
     return null;

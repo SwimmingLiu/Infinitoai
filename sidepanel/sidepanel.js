@@ -52,6 +52,8 @@ const runTargetEmailTimer = document.getElementById('run-target-email-timer');
 const rowMailProvider = document.getElementById('row-mail-provider');
 const selectMailProvider = document.getElementById('select-mail-provider');
 const selectEmailSource = document.getElementById('select-email-source');
+const row2925Prefix = document.getElementById('row-2925-prefix');
+const input2925Prefix = document.getElementById('input-2925-prefix');
 const row33MailSettings = document.getElementById('row-33mail-settings');
 const row33MailRotate = document.getElementById('row-33mail-rotate');
 const input33MailDomain163 = document.getElementById('input-33mail-domain-163');
@@ -454,6 +456,9 @@ async function restoreState() {
       selectMailProvider.value = state.mailProvider;
     }
     selectEmailSource.value = sanitizeEmailSource(state.emailSource);
+    if (state.mail2925Prefix !== undefined) {
+      input2925Prefix.value = state.mail2925Prefix || '';
+    }
     mailDomainSettingsState = normalize33MailDomainSettings(state.mailDomainSettings);
     tmailorDomainState = normalizeTmailorDomainState(state.tmailorDomainState);
     tmailorApiStatusState = state.tmailorApiStatus || tmailorApiStatusState;
@@ -687,19 +692,22 @@ function updateTargetEmailTimerDisplay(lastTargetEmailAcquiredAt = lastTargetEma
 
 function updateMailProviderUI() {
   const source = sanitizeEmailSource(selectEmailSource.value);
-  const useInbucket = selectMailProvider.value === 'inbucket';
-  rowMailProvider.style.display = source === 'tmailor' ? 'none' : '';
+  const sourceUsesDedicatedMailbox = source === 'tmailor' || source === '2925';
+  const useInbucket = !sourceUsesDedicatedMailbox && selectMailProvider.value === 'inbucket';
+  rowMailProvider.style.display = sourceUsesDedicatedMailbox ? 'none' : '';
   rowInbucketHost.style.display = useInbucket ? '' : 'none';
   rowInbucketMailbox.style.display = useInbucket ? '' : 'none';
 }
 
 function getEmailSourceLabel() {
   if (selectEmailSource.value === '33mail') return '33mail';
+  if (selectEmailSource.value === '2925') return '2925';
   if (selectEmailSource.value === 'tmailor') return 'TMailor';
   return 'Duck';
 }
 
 function getCurrentProviderLabel() {
+  if (sanitizeEmailSource(selectEmailSource.value) === '2925') return '2925';
   if (selectMailProvider.value === 'qq') return 'QQ';
   if (selectMailProvider.value === 'inbucket') return 'Inbucket';
   return '163';
@@ -718,10 +726,11 @@ function update33MailGroupUI() {
 function updateEmailSourceUI() {
   const emailSource = sanitizeEmailSource(selectEmailSource.value);
   const is33Mail = emailSource === '33mail';
+  const is2925 = emailSource === '2925';
   const isTmailor = emailSource === 'tmailor';
   const currentProvider = selectMailProvider.value;
-  const isGroupedMailProvider = currentProvider === '163' || currentProvider === 'qq';
 
+  row2925Prefix.style.display = is2925 ? '' : 'none';
   row33MailSettings.style.display = is33Mail ? '' : 'none';
   row33MailRotate.style.display = is33Mail ? '' : 'none';
   rowTmailorDomains.style.display = isTmailor ? '' : 'none';
@@ -983,7 +992,7 @@ function renderFetchButton(isBusy = false) {
       : 'Generating or fetching email...'
     : emailSource === 'tmailor'
       ? 'Paste and validate email'
-      : emailSource === '33mail'
+      : emailSource === '33mail' || emailSource === '2925'
       ? 'Generate email'
       : 'Fetch email';
   btnFetchEmail.setAttribute('aria-label', btnFetchEmail.title);
@@ -1337,7 +1346,7 @@ async function fetchEmailAddress(options = {}) {
       : response.mailProvider === '163'
         ? '163'
         : getCurrentProviderLabel();
-    const isGeneratedSource = response.emailSource === '33mail' || response.emailSource === 'tmailor';
+    const isGeneratedSource = response.emailSource === '33mail' || response.emailSource === '2925' || response.emailSource === 'tmailor';
     showToast(
       `${isGeneratedSource ? 'Ready' : 'Fetched'} ${response.email}${response.emailSource === '33mail' ? ` · ${providerLabel}` : ''}`,
       'success',
@@ -1472,7 +1481,7 @@ document.querySelectorAll('.step-btn').forEach(btn => {
     });
     if (step === 3) {
       const email = inputEmail.value.trim();
-      if (!['33mail', 'tmailor'].includes(sanitizeEmailSource(selectEmailSource.value)) && !email) {
+      if (!['33mail', '2925', 'tmailor'].includes(sanitizeEmailSource(selectEmailSource.value)) && !email) {
         showToast('Please paste email address or use Auto first', 'warn');
         return;
       }
@@ -1662,6 +1671,7 @@ function collectTopSettingPayload(overrides = {}) {
     vpsCpaPassword: inputVpsCpaPassword.value,
     mailProvider: selectMailProvider.value,
     emailSource: selectEmailSource.value,
+    mail2925Prefix: input2925Prefix.value,
     mailDomainSettings: mailDomainSettingsState,
     inbucketHost: inputInbucketHost.value,
     inbucketMailbox: inputInbucketMailbox.value,
@@ -1742,6 +1752,10 @@ selectMailProvider.addEventListener('change', async () => {
 selectEmailSource.addEventListener('change', async () => {
   updateEmailSourceUI();
   await saveTopSetting({ emailSource: selectEmailSource.value });
+});
+
+input2925Prefix.addEventListener('input', async () => {
+  await saveTopSetting({ mail2925Prefix: input2925Prefix.value.trim() });
 });
 
 Object.entries(mailDomainInputs).forEach(([provider, input]) => {

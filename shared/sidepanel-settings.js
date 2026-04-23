@@ -13,11 +13,13 @@
   const DEFAULT_ACCOUNT_SUCCESS_ONLY = true;
   const DEFAULT_MAIL_PROVIDER = '163';
   const DEFAULT_EMAIL_SOURCE = 'tmailor';
+  const DEFAULT_MAIL2925_PREFIX = '';
   const PERSISTED_TOP_SETTING_KEYS = [
     'vpsUrl',
     'vpsCpaPassword',
     'mailProvider',
     'emailSource',
+    'mail2925Prefix',
     'mailDomainSettings',
     'inbucketHost',
     'inbucketMailbox',
@@ -75,9 +77,19 @@
   }
 
   function sanitizeEmailSource(value) {
-    return value === '33mail' || value === 'duck' || value === 'tmailor'
+    return value === '33mail' || value === 'duck' || value === '2925' || value === 'tmailor'
       ? value
       : DEFAULT_EMAIL_SOURCE;
+  }
+
+  function normalizeMail2925Prefix(value) {
+    return String(value || '')
+      .trim()
+      .toLowerCase()
+      .replace(/@2925\.com$/i, '')
+      .replace(/[^a-z0-9._-]+/g, '')
+      .replace(/_+/g, '_')
+      .replace(/^[._-]+|[._-]+$/g, '');
   }
 
   function normalizeEmailDomain(domain) {
@@ -98,6 +110,7 @@
       vpsCpaPassword: typeof value.vpsCpaPassword === 'string' ? value.vpsCpaPassword : '',
       mailProvider: sanitizeMailProvider(value.mailProvider),
       emailSource: sanitizeEmailSource(value.emailSource),
+      mail2925Prefix: normalizeMail2925Prefix(value.mail2925Prefix),
       mailDomainSettings: normalizeMailDomainSettings(value.mailDomainSettings),
       inbucketHost: typeof value.inbucketHost === 'string' ? value.inbucketHost : '',
       inbucketMailbox: typeof value.inbucketMailbox === 'string' ? value.inbucketMailbox : '',
@@ -130,6 +143,10 @@
         : '33mail uses the 163 / QQ groups';
     }
 
+    if (normalizedSource === '2925') {
+      return 'Step 3 will generate a 2925 address automatically';
+    }
+
     if (normalizedSource === 'tmailor') {
       return 'Paste the generated TMailor address here manually';
     }
@@ -152,6 +169,10 @@
         : '33mail uses the 163 / QQ groups';
     }
 
+    if (normalizedSource === '2925') {
+      return 'Enter a 2925 prefix, then generate an address and continue. Auto run will resume automatically.';
+    }
+
     if (normalizedSource === 'tmailor') {
       return 'Click New Email on TMailor, then paste the generated address into Email. Auto run will resume automatically.';
     }
@@ -166,9 +187,11 @@
     DEFAULT_AUTO_ROTATE_MAIL_PROVIDER,
     DEFAULT_ACCOUNT_SUCCESS_ONLY,
     DEFAULT_EMAIL_SOURCE,
+    DEFAULT_MAIL2925_PREFIX,
     PERSISTED_TOP_SETTING_KEYS,
     getAutoContinueHint,
     getEmailInputPlaceholder,
+    normalizeMail2925Prefix,
     normalizePersistentSettings,
     sanitizeAccountSuccessOnly,
     sanitizeAutoRunCount,

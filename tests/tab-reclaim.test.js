@@ -17,8 +17,9 @@ test('buildReclaimableTabRegistry recognizes restored tabs for known sources', (
       { id: 12, url: 'https://wx.mail.qq.com/', lastAccessed: 30 },
       { id: 13, url: 'https://duckduckgo.com/email/settings/autofill', lastAccessed: 40 },
       { id: 14, url: 'https://tmailor.com/', lastAccessed: 50 },
-      { id: 15, url: 'https://panel.example.com/#/oauth', lastAccessed: 60 },
-      { id: 16, url: 'https://example.com/unrelated', lastAccessed: 70 },
+      { id: 15, url: 'https://2925.com/#/mailList', lastAccessed: 60 },
+      { id: 16, url: 'https://panel.example.com/#/oauth', lastAccessed: 70 },
+      { id: 17, url: 'https://example.com/unrelated', lastAccessed: 80 },
     ],
     {
       vpsUrl: 'https://panel.example.com/#/oauth',
@@ -32,7 +33,8 @@ test('buildReclaimableTabRegistry recognizes restored tabs for known sources', (
     'qq-mail': { tabId: 12, ready: false },
     'duck-mail': { tabId: 13, ready: false },
     'tmailor-mail': { tabId: 14, ready: false },
-    'vps-panel': { tabId: 15, ready: false },
+    'mail-2925': { tabId: 15, ready: false },
+    'vps-panel': { tabId: 16, ready: false },
   });
 });
 

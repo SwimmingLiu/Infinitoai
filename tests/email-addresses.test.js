@@ -5,8 +5,10 @@ const {
   DEFAULT_EMAIL_SOURCE,
   createDefault33MailDomainSettings,
   generate33MailAddress,
+  generate2925Address,
   get33MailDomainForProvider,
   normalize33MailDomainSettings,
+  normalize2925Prefix,
   normalizeEmailDomain,
   sanitizeEmailSource,
 } = require('../shared/email-addresses.js');
@@ -14,6 +16,7 @@ const {
 test('sanitizeEmailSource keeps known sources and falls back to tmailor', () => {
   assert.equal(sanitizeEmailSource('duck'), 'duck');
   assert.equal(sanitizeEmailSource('33mail'), '33mail');
+  assert.equal(sanitizeEmailSource('2925'), '2925');
   assert.equal(sanitizeEmailSource('tmailor'), 'tmailor');
   assert.equal(sanitizeEmailSource('qq'), DEFAULT_EMAIL_SOURCE);
   assert.equal(sanitizeEmailSource(undefined), DEFAULT_EMAIL_SOURCE);
@@ -75,4 +78,19 @@ test('generate33MailAddress keeps aliases readable without a fixed machine-like 
 
   assert.match(email, /^[a-z]{8}\d{2}[0-9a-z]{4}@demo\.33mail\.com$/);
   assert.doesNotMatch(email, /^sf/i);
+});
+
+test('generate2925Address normalizes the prefix and adds a deterministic 4-char suffix', () => {
+  const randomValues = [0, 0.028, 0.056, 0.084];
+  let randomIndex = 0;
+  const email = generate2925Address(' Demo.User@2925.com ', {
+    randomFn: () => {
+      const value = randomValues[randomIndex % randomValues.length];
+      randomIndex += 1;
+      return value;
+    },
+  });
+
+  assert.equal(normalize2925Prefix(' Demo.User@2925.com '), 'demo.user');
+  assert.equal(email, 'demo.user_abcd@2925.com');
 });

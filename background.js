@@ -72,7 +72,7 @@ const {
   queueCommandForReinjection,
 } = ContentScriptQueue;
 const { mergeLoginVerificationCodeExclusions } = LoginVerificationCodes;
-const { DEFAULT_EMAIL_SOURCE, generate33MailAddress, get33MailDomainForProvider, sanitizeEmailSource } = EmailAddresses;
+const { DEFAULT_EMAIL_SOURCE, generate33MailAddress, generate2925Address, get33MailDomainForProvider, sanitizeEmailSource } = EmailAddresses;
 const { chooseMailProviderForAutoRun, getConfiguredRotatableMailProviders, getNextMailProviderAvailabilityTimestamp, isRotatableMailProvider, pruneMailProviderUsage, recordMailProviderUsage } = MailProviderRotation;
 const { DEFAULT_TMAILOR_DOMAIN_STATE, extractEmailDomain, isAllowedTmailorDomain, mergeTmailorDomainStates, normalizeTmailorDomainState, recordTmailorDomainFailure, recordTmailorDomainSuccess, shouldBlacklistTmailorDomainForError } = TmailorDomains;
 const {
@@ -130,6 +130,9 @@ const RECLAIM_SOURCE_CONFIG = {
     readyOnClaim: true,
   },
   'mail-163': {
+    readyOnClaim: true,
+  },
+  'mail-2925': {
     readyOnClaim: true,
   },
   'duck-mail': {
@@ -861,6 +864,7 @@ async function closeAutoRunRoundTabs() {
     'signup-page',
     'qq-mail',
     'mail-163',
+    'mail-2925',
     'duck-mail',
     'tmailor-mail',
     'inbucket-mail',
@@ -2036,6 +2040,7 @@ async function handleMessage(message, sender) {
       if (message.payload.customPassword !== undefined) sessionUpdates.customPassword = message.payload.customPassword;
       if (message.payload.mailProvider !== undefined) persistentUpdates.mailProvider = message.payload.mailProvider;
       if (message.payload.emailSource !== undefined) persistentUpdates.emailSource = sanitizePersistedEmailSource(message.payload.emailSource);
+      if (message.payload.mail2925Prefix !== undefined) persistentUpdates.mail2925Prefix = message.payload.mail2925Prefix;
       if (message.payload.mailDomainSettings !== undefined) persistentUpdates.mailDomainSettings = message.payload.mailDomainSettings;
       if (message.payload.inbucketHost !== undefined) persistentUpdates.inbucketHost = message.payload.inbucketHost;
       if (message.payload.inbucketMailbox !== undefined) persistentUpdates.inbucketMailbox = message.payload.inbucketMailbox;
@@ -2796,6 +2801,7 @@ function getCurrentAutoRotateMailProvider(state) {
 
 function getEmailSourceLabel(emailSource) {
   if (emailSource === '33mail') return '33mail';
+  if (emailSource === '2925') return '2925';
   if (emailSource === 'tmailor') return 'TMailor';
   return 'Duck Mail';
 }
@@ -2803,6 +2809,9 @@ function getEmailSourceLabel(emailSource) {
 function getEmailWaitHint(emailSource) {
   if (emailSource === '33mail') {
     return 'Configure the 33mail domain or generate an email manually, then continue';
+  }
+  if (emailSource === '2925') {
+    return 'Enter a 2925 prefix, generate an address, then continue';
   }
   if (emailSource === 'tmailor') {
     return 'Open TMailor and generate a supported mailbox, or switch to com+whitelist mode and continue';
@@ -2955,6 +2964,21 @@ async function generate33MailEmail(options = {}) {
   return email;
 }
 
+async function generate2925Email(options = {}) {
+  throwIfStopped();
+  const { generateNew = true } = options;
+  const state = await getState();
+  const currentEmail = String(state.email || '').trim();
+  if (!generateNew && /@2925\.com$/i.test(currentEmail)) {
+    return currentEmail;
+  }
+
+  const email = generate2925Address(state.mail2925Prefix);
+  await setEmailState(email);
+  await addLog(`2925 email generated: ${email}`, 'ok');
+  return email;
+}
+
 async function fetchTmailorEmail(options = {}) {
   throwIfStopped();
   const { generateNew = true } = options;
@@ -3051,6 +3075,9 @@ async function fetchEmailAddress(options = {}) {
   const emailSource = getCurrentEmailSource(state);
   if (emailSource === '33mail') {
     return await generate33MailEmail(options);
+  }
+  if (emailSource === '2925') {
+    return await generate2925Email(options);
   }
   if (emailSource === 'tmailor') {
     return await fetchTmailorEmail(options);
@@ -4073,6 +4100,13 @@ async function executeStep3(state) {
     }
   }
 
+  if (emailSource === '2925') {
+    const normalizedEmail = String(email || '').trim().toLowerCase();
+    if (!/@2925\.com$/i.test(normalizedEmail)) {
+      email = await generate2925Email({ generateNew: true });
+    }
+  }
+
   if (emailSource === 'tmailor' && !isTmailorEmailAllowed(state, email)) {
     email = await fetchTmailorEmail({ generateNew: true });
   }
@@ -4109,7 +4143,7 @@ async function executeStep3(state) {
     email,
     password,
     emailSource,
-    mailProvider: state.mailProvider,
+    mailProvider: emailSource === '2925' ? '2925' : state.mailProvider,
   });
 
   await addLog(`第 3 步：正在填写邮箱 ${email}，点击 Continue，并请求一次性验证码...`);
@@ -4221,6 +4255,9 @@ async function waitForStep3CompletionSignalOrRecoveredAuthState() {
 function getMailConfig(state) {
   if (getCurrentEmailSource(state) === 'tmailor') {
     return { source: 'tmailor-mail', url: 'https://tmailor.com/', label: 'TMailor' };
+  }
+  if (getCurrentEmailSource(state) === '2925') {
+    return { source: 'mail-2925', url: 'https://2925.com/#/mailList', label: '2925 Mail', navigateOnReuse: true };
   }
   const provider = state.mailProvider || 'qq';
   if (provider === '163') {

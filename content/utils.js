@@ -14,6 +14,7 @@ var SCRIPT_SOURCE = (() => {
   if (url.includes('platform.openai.com') || url.includes('auth0.openai.com') || url.includes('auth.openai.com') || url.includes('accounts.openai.com')) return 'signup-page';
   if (url.includes('mail.qq.com')) return 'qq-mail';
   if (url.includes('mail.163.com')) return 'mail-163';
+  if (url.includes('2925.com')) return 'mail-2925';
   if (url.includes('duckduckgo.com/email/settings/autofill')) return 'duck-mail';
   if (url.includes('tmailor.com')) return 'tmailor-mail';
   if (url.includes('chatgpt.com')) return 'chatgpt';
@@ -387,7 +388,7 @@ async function humanPause(min = 250, max = 850) {
 
 // Auto-report ready on load
 // Skip ready signal from child iframes of mail pages to avoid overwriting the top frame's registration
-var _isMailChildFrame = (SCRIPT_SOURCE === 'qq-mail' || SCRIPT_SOURCE === 'mail-163' || SCRIPT_SOURCE === 'inbucket-mail') && window !== window.top;
+var _isMailChildFrame = (SCRIPT_SOURCE === 'qq-mail' || SCRIPT_SOURCE === 'mail-163' || SCRIPT_SOURCE === 'mail-2925' || SCRIPT_SOURCE === 'inbucket-mail') && window !== window.top;
 var _shouldDeferReadyUntilAuthHandlers = SCRIPT_SOURCE === 'signup-page';
 if (!_isMailChildFrame && !_shouldDeferReadyUntilAuthHandlers && !__MULTIPAGE_UTILS_STATE.readyReported) {
   __MULTIPAGE_UTILS_STATE.readyReported = true;
