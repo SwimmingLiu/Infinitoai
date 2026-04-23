@@ -134,6 +134,26 @@
     return registry;
   }
 
+  function pickAutomationWindowId({
+    sourceWindowId = null,
+    focusedWindowId = null,
+    cachedWindowId = null,
+  } = {}) {
+    if (Number.isFinite(sourceWindowId)) {
+      return sourceWindowId;
+    }
+
+    if (Number.isFinite(focusedWindowId)) {
+      return focusedWindowId;
+    }
+
+    if (Number.isFinite(cachedWindowId)) {
+      return cachedWindowId;
+    }
+
+    return null;
+  }
+
   function shouldPrepareSameUrlTabForReuse(entry, options = {}) {
     const hasDynamicInjection = Array.isArray(options?.inject)
       ? options.inject.length > 0
@@ -160,6 +180,7 @@
     detectReclaimableSource,
     normalizeComparableUrl,
     normalizeOrigin,
+    pickAutomationWindowId,
     shouldReuseActiveTabOnCreate,
     shouldPrepareSameUrlTabForReuse,
   };

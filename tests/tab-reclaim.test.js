@@ -6,6 +6,7 @@ const {
   detectReclaimableSource,
   normalizeOrigin,
   normalizeComparableUrl,
+  pickAutomationWindowId,
   shouldReuseActiveTabOnCreate,
   shouldPrepareSameUrlTabForReuse,
 } = require('../shared/tab-reclaim.js');
@@ -141,5 +142,27 @@ test('signup-page avoids reusing the current active tab during create-path navig
   assert.equal(
     shouldReuseActiveTabOnCreate('signup-page', { reuseActiveTabOnCreate: false }),
     false
+  );
+});
+
+test('new source tabs prefer the currently focused window over a stale cached automation window', () => {
+  assert.equal(
+    pickAutomationWindowId({
+      sourceWindowId: null,
+      focusedWindowId: 42,
+      cachedWindowId: 7,
+    }),
+    42
+  );
+});
+
+test('existing source tabs keep their current window instead of hopping to the focused window', () => {
+  assert.equal(
+    pickAutomationWindowId({
+      sourceWindowId: 7,
+      focusedWindowId: 42,
+      cachedWindowId: 99,
+    }),
+    7
   );
 });

@@ -239,6 +239,13 @@ if (window.__MULTIPAGE_MAIL_2925_LOADED) {
     }
   }
 
+  async function openMailDetailAndReadText(item) {
+    guardStop();
+    simulateClick(item);
+    await sleepWithStop(800);
+    return String(document.body?.innerText || document.body?.textContent || '');
+  }
+
   async function handlePollEmail(step, payload) {
     const senderFilters = Array.isArray(payload.senderFilters) ? payload.senderFilters : [];
     const subjectFilters = Array.isArray(payload.subjectFilters) ? payload.subjectFilters : [];
@@ -278,6 +285,16 @@ if (window.__MULTIPAGE_MAIL_2925_LOADED) {
         const candidateText = getMailItemText(item);
         const code = extractVerificationCode(candidateText);
         if (!code) {
+          const detailText = await openMailDetailAndReadText(item);
+          const detailCode = extractVerificationCode(detailText);
+          if (detailCode) {
+            log(`Step ${step}: Code found in 2925 mail detail: ${detailCode}`, 'ok');
+            return {
+              ok: true,
+              code: detailCode,
+              emailTimestamp: parseMailTimestamp(getMailItemTimeText(item)) || Date.now(),
+            };
+          }
           continue;
         }
         if (excludeCodes.includes(code)) {
