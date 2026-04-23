@@ -3229,6 +3229,52 @@ test('auth page state reports when signup is still on the credential form', asyn
   assert.equal(response?.hasVisibleProfileFormInput, false);
 });
 
+test('auth page state exposes a Cloudflare human-verification challenge before auth polling continues', async () => {
+  const turnstileContainer = {
+    className: 'cf-turnstile',
+    getBoundingClientRect() {
+      return { width: 320, height: 80 };
+    },
+  };
+
+  const context = createContext({
+    href: 'https://auth.openai.com/u/signup/password',
+    bodyText: 'Please verify you are human before continuing.',
+    querySelectorImpl(selector) {
+      if (selector.includes('.cf-turnstile') || selector.includes('.html-captcha')) {
+        return turnstileContainer;
+      }
+      if (selector.includes('input[name="cf-turnstile-response"]')) {
+        return { value: '' };
+      }
+      return null;
+    },
+    querySelectorAllImpl(selector) {
+      if (selector.includes('.cf-turnstile') || selector.includes('.html-captcha') || selector.includes('cf-turnstile-response')) {
+        return [turnstileContainer];
+      }
+      return [];
+    },
+  });
+  loadSignupPage(context);
+
+  const listener = context.__listeners[0];
+  assert.ok(listener, 'expected signup-page to register a runtime listener');
+
+  const response = await new Promise((resolve, reject) => {
+    const keepAlive = listener(
+      { type: 'CHECK_AUTH_PAGE_STATE', source: 'background', payload: {} },
+      {},
+      (result) => resolve(result)
+    );
+    assert.equal(keepAlive, true);
+    setTimeout(() => reject(new Error('timeout waiting for response')), 2000);
+  });
+
+  assert.equal(response?.hasHumanVerificationChallenge, true);
+  assert.equal(response?.authChallengeKind, 'cloudflare_turnstile');
+});
+
 test('auth page state requires email-verification context before promoting the profile form as ready', async () => {
   const codeInput = {
     getBoundingClientRect() {
@@ -3373,6 +3419,183 @@ test('auth page state promotes the about-you style profile form only when profil
   assert.equal(response?.hasVisibleProfileFormInput, true);
   assert.equal(response?.hasReadyProfilePage, true);
   assert.equal(response?.hasReadyVerificationPage, false);
+});
+
+test('step 3 waits for a manual auth verification challenge to clear before continuing with the password screen', async () => {
+  let fakeNow = 0;
+  class FakeDate extends Date {
+    static now() {
+      fakeNow += 250;
+      return fakeNow;
+    }
+  }
+
+  const emailInput = {
+    getBoundingClientRect() {
+      return { width: 180, height: 42 };
+    },
+    dispatchEvent() {},
+    focus() {},
+  };
+  const passwordInput = {
+    getBoundingClientRect() {
+      return { width: 180, height: 42 };
+    },
+    dispatchEvent() {},
+    focus() {},
+  };
+  const codeInput = {
+    getBoundingClientRect() {
+      return { width: 120, height: 40 };
+    },
+    dispatchEvent() {},
+    focus() {},
+  };
+  const emailSubmitButton = {
+    textContent: 'Continue',
+    getBoundingClientRect() {
+      return { width: 140, height: 40 };
+    },
+    dispatchEvent() {},
+    focus() {},
+  };
+  const passwordSubmitButton = {
+    textContent: 'Create account',
+    getBoundingClientRect() {
+      return { width: 160, height: 40 };
+    },
+    dispatchEvent() {},
+    focus() {},
+  };
+  const turnstileContainer = {
+    className: 'cf-turnstile',
+    getBoundingClientRect() {
+      return { width: 320, height: 80 };
+    },
+  };
+
+  let phase = 'email';
+  let challengeVisible = false;
+  let challengeChecks = 0;
+  let context = null;
+
+  context = createContext({
+    href: 'https://platform.openai.com/login',
+    bodyText: 'Build on the OpenAI API Platform',
+    DateImpl: FakeDate,
+    waitForElementImpl(selector) {
+      if (selector.includes('input#login-email') || selector.includes('input[type="email"]')) {
+        return Promise.resolve(emailInput);
+      }
+      return Promise.reject(new Error('missing'));
+    },
+    querySelectorImpl(selector) {
+      if (selector === 'button[type="submit"]') {
+        if (phase === 'email') {
+          return emailSubmitButton;
+        }
+        if (phase === 'password') {
+          return passwordSubmitButton;
+        }
+        return null;
+      }
+      if (selector.includes('.cf-turnstile') || selector.includes('.html-captcha')) {
+        return challengeVisible ? turnstileContainer : null;
+      }
+      if (selector.includes('input[name="cf-turnstile-response"]')) {
+        return challengeVisible ? { value: '' } : null;
+      }
+      return null;
+    },
+    querySelectorAllImpl(selector) {
+      context.document.body.innerText = challengeVisible
+        ? 'Please verify you are human before continuing.'
+        : phase === 'verification'
+          ? 'Enter the 6-digit code'
+          : 'Build on the OpenAI API Platform';
+
+      if (
+        selector === 'input[type="email"]'
+        || selector.includes('input[name="email"]')
+        || selector.includes('input[name="username"]')
+        || selector.includes('input[autocomplete="username"]')
+        || selector.includes('input[inputmode="email"]')
+        || selector.includes('input[id*="email"]')
+        || selector.includes('input[placeholder*="email"]')
+      ) {
+        return phase === 'verification' ? [] : [emailInput];
+      }
+
+      if (selector === 'input[type="password"]') {
+        return phase === 'password' ? [passwordInput] : [];
+      }
+
+      if (selector === 'input[name="code"]' || selector === 'input[inputmode="numeric"]') {
+        return phase === 'verification' ? [codeInput] : [];
+      }
+
+      if (selector.includes('.cf-turnstile') || selector.includes('.html-captcha') || selector.includes('cf-turnstile-response')) {
+        if (!challengeVisible) {
+          return [];
+        }
+        challengeChecks += 1;
+        if (challengeChecks >= 3) {
+          challengeVisible = false;
+          phase = 'password';
+          context.document.body.innerText = 'Create your account';
+          return [];
+        }
+        return [turnstileContainer];
+      }
+
+      return [];
+    },
+  });
+  context.simulateClick = (target) => {
+    if (target === emailSubmitButton) {
+      phase = 'challenge';
+      challengeVisible = true;
+      context.location.href = 'https://auth.openai.com/u/signup/password';
+      context.document.body.innerText = 'Please verify you are human before continuing.';
+      return;
+    }
+
+    if (target === passwordSubmitButton) {
+      phase = 'verification';
+      challengeVisible = false;
+      context.location.href = 'https://auth.openai.com/email-verification';
+      context.document.body.innerText = 'Enter the 6-digit code';
+    }
+  };
+  loadSignupPage(context);
+
+  const listener = context.__listeners[0];
+  assert.ok(listener, 'expected signup-page to register a runtime listener');
+
+  const response = await new Promise((resolve, reject) => {
+    const keepAlive = listener(
+      { type: 'EXECUTE_STEP', step: 3, payload: { email: 'demo@example.com', password: 'secret-pass' } },
+      {},
+      (result) => resolve(result)
+    );
+    assert.equal(keepAlive, true);
+    setTimeout(() => reject(new Error('timeout waiting for response')), 3000);
+  });
+
+  assert.equal(response?.ok, true);
+  assert.ok(challengeChecks >= 3, 'expected the auth challenge polling path to run');
+  assert.deepEqual(context.__errors, []);
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(context.__completions)),
+    [
+      {
+        step: 3,
+        payload: {
+          email: 'demo@example.com',
+        },
+      },
+    ]
+  );
 });
 
 test('step 7 does not treat a post-submit retry page as accepted when the code input disappears', async () => {

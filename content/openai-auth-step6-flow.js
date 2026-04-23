@@ -15,6 +15,7 @@ async function step6_login(payload) {
 
   log(`Step 6: Logging in with ${email}...`);
   const latestPageOauthUrl = await authFlow.resolveLatestPageOauthUrl();
+  await authFlow.waitForAuthHumanVerificationIfPresent?.(6);
 
   let emailInput = null;
   try {

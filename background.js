@@ -4195,7 +4195,7 @@ function isCanonicalEmailVerificationUrl(url = '') {
 }
 
 function isStep3RecoveredAuthPageReady(pageState = {}) {
-  if (pageState?.hasFatalError || pageState?.hasAuthOperationTimedOut || pageState?.isReachable === false) {
+  if (pageState?.hasFatalError || pageState?.hasAuthOperationTimedOut || pageState?.isReachable === false || pageState?.hasHumanVerificationChallenge) {
     return false;
   }
 
@@ -4876,6 +4876,8 @@ async function getSignupAuthPageState() {
         isReachable: true,
         requiresPhoneVerification: false,
         hasUnsupportedEmail: false,
+        hasHumanVerificationChallenge: false,
+        authChallengeKind: '',
         hasFatalError: false,
         hasAuthOperationTimedOut: false,
         hasVisibleCredentialInput: false,
@@ -4897,6 +4899,8 @@ async function getSignupAuthPageState() {
       isReachable: true,
       requiresPhoneVerification: false,
       hasUnsupportedEmail: false,
+      hasHumanVerificationChallenge: false,
+      authChallengeKind: '',
       hasFatalError: false,
       hasAuthOperationTimedOut: false,
       hasVisibleCredentialInput: false,
@@ -4916,6 +4920,8 @@ async function getSignupAuthPageState() {
       isReachable: false,
       requiresPhoneVerification: false,
       hasUnsupportedEmail: false,
+      hasHumanVerificationChallenge: false,
+      authChallengeKind: '',
       hasFatalError: false,
       hasAuthOperationTimedOut: false,
       hasVisibleCredentialInput: false,
@@ -5243,6 +5249,19 @@ async function ensureSignupPageReadyForVerification(state, step = 4) {
 
     if (pageState?.hasFatalError) {
       throw new Error(`Step ${step} blocked: auth page showed a fatal error before the verification email step.`);
+    }
+
+    if (pageState?.hasHumanVerificationChallenge) {
+      consecutiveVerificationShortcutSignals = 0;
+      if (!hasLoggedAmbiguousPageWait) {
+        hasLoggedAmbiguousPageWait = true;
+        await addLog(
+          `Step ${step}: Auth page is waiting on a human-verification challenge. Waiting for the current tab to clear it before checking the inbox...`,
+          'warn'
+        );
+      }
+      await sleepWithStop(1000);
+      continue;
     }
 
     const blockerMessage = getVerificationMailStepPollingBlocker(step, pageState);
@@ -5881,6 +5900,7 @@ async function waitForStep6CompletionSignalOrRecoveredAuthState() {
         pageState?.url
         && !pageState?.hasVisibleCredentialInput
         && !isExistingAccountLoginPasswordPageUrl(pageState?.url)
+        && !pageState?.hasHumanVerificationChallenge
         && !pageState?.requiresPhoneVerification
         && !pageState?.hasFatalError
         && !pageState?.hasAuthOperationTimedOut
