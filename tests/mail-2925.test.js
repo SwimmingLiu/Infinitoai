@@ -9,6 +9,10 @@ function createContext() {
   const state = {
     logs: [],
     runtimeMessages: [],
+    stopRequested: false,
+    resetStopStateCalls: 0,
+    reportedErrors: [],
+    sleepCalls: 0,
   };
 
   const context = {
@@ -36,10 +40,27 @@ function createContext() {
     MailMatching: require('../shared/mail-matching.js'),
     MailFreshness: require('../shared/mail-freshness.js'),
     LatestMail: require('../shared/latest-mail.js'),
+    resetStopState() {
+      state.resetStopStateCalls += 1;
+      state.stopRequested = false;
+    },
+    isStopError(error) {
+      return /stopped by user/i.test(String(error?.message || error || ''));
+    },
+    throwIfStopped() {
+      if (state.stopRequested) {
+        throw new Error('Flow stopped by user.');
+      }
+    },
+    reportError(step, message) {
+      state.reportedErrors.push({ step, message });
+    },
     log(message, level = 'info') {
       state.logs.push({ message, level });
     },
-    sleep: async () => {},
+    sleep: async () => {
+      state.sleepCalls += 1;
+    },
     setTimeout,
     clearTimeout,
     MouseEvent: function MouseEvent(type, init = {}) {
@@ -154,8 +175,55 @@ test('mail-2925 accepts the newest matching row even when the list timestamp is 
 
   assert.equal(result?.ok, true);
   assert.equal(result?.code, '654321');
+  assert.equal(state.resetStopStateCalls, 1);
   assert.ok(
     state.logs.some((entry) => /Starting email poll on 2925 Mail/i.test(entry.message)),
     'expected the 2925 poll flow to emit a start log'
   );
+});
+
+test('mail-2925 exits promptly when a stop request lands during polling', async () => {
+  const context = createContext();
+  const state = context.__state;
+
+  context.document.querySelectorAll = () => [];
+  context.sleep = async () => {
+    state.sleepCalls += 1;
+    state.stopRequested = true;
+  };
+
+  loadMail2925Script(context);
+
+  const listener = context.__listeners[0];
+  assert.ok(listener, 'expected the 2925 content script to register a runtime listener');
+
+  const result = await new Promise((resolve, reject) => {
+    const response = listener({
+      type: 'POLL_EMAIL',
+      step: 4,
+      controlSequence: 7,
+      payload: {
+        senderFilters: ['openai'],
+        subjectFilters: ['chatgpt'],
+        maxAttempts: 2,
+        intervalMs: 500,
+        filterAfterTimestamp: Date.now() - 60 * 1000,
+        excludeCodes: [],
+        targetEmail: '',
+      },
+    }, {}, (value) => resolve(value));
+
+    if (response !== true) {
+      reject(new Error('expected async response from mail-2925 listener'));
+    }
+  });
+
+  assert.equal(result?.stopped, true);
+  assert.match(String(result?.error || ''), /Flow stopped by user/i);
+  assert.equal(state.resetStopStateCalls, 1);
+  assert.ok(
+    state.logs.some((entry) => /Stopped by user/i.test(entry.message)),
+    'expected stop handling to log a user stop message'
+  );
+  assert.equal(state.reportedErrors.length, 0);
 });

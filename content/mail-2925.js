@@ -28,9 +28,24 @@ if (window.__MULTIPAGE_MAIL_2925_LOADED) {
         return undefined;
       }
 
+      if (typeof resetStopState === 'function') {
+        resetStopState(message.controlSequence);
+      }
+
       handlePollEmail(message.step, message.payload || {})
         .then((result) => sendResponse(result))
-        .catch((error) => sendResponse({ error: error?.message || String(error || 'unknown error') }));
+        .catch((error) => {
+          if (typeof isStopError === 'function' && isStopError(error)) {
+            log(`Step ${message.step}: Stopped by user.`, 'warn');
+            sendResponse({ stopped: true, error: error.message });
+            return;
+          }
+
+          if (typeof reportError === 'function') {
+            reportError(message.step, error?.message || String(error || 'unknown error'));
+          }
+          sendResponse({ error: error?.message || String(error || 'unknown error') });
+        });
       return true;
     });
   }
@@ -203,13 +218,14 @@ if (window.__MULTIPAGE_MAIL_2925_LOADED) {
   }
 
   async function refreshInbox() {
+    guardStop();
     const refreshButton = document.querySelector(
       '[class*="refresh"], [title*="刷新"], [aria-label*="刷新"], [class*="Refresh"]'
     );
 
     if (refreshButton) {
       simulateClick(refreshButton);
-      await sleep(900);
+      await sleepWithStop(900);
       return;
     }
 
@@ -219,7 +235,7 @@ if (window.__MULTIPAGE_MAIL_2925_LOADED) {
 
     if (inboxLink) {
       simulateClick(inboxLink);
-      await sleep(900);
+      await sleepWithStop(900);
     }
   }
 
@@ -232,10 +248,12 @@ if (window.__MULTIPAGE_MAIL_2925_LOADED) {
     const filterAfterTimestamp = Number.parseInt(String(payload.filterAfterTimestamp ?? 0), 10) || 0;
     const targetEmail = String(payload.targetEmail || '').trim();
 
+    guardStop();
     log(`Step ${step}: Starting email poll on 2925 Mail (max ${maxAttempts} attempts)`);
-    await sleep(800);
+    await sleepWithStop(800);
 
     for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+      guardStop();
       log(`Polling 2925 Mail... attempt ${attempt}/${maxAttempts}`);
 
       if (attempt > 1) {
@@ -245,7 +263,7 @@ if (window.__MULTIPAGE_MAIL_2925_LOADED) {
       const items = getMailItems();
       if (items.length === 0) {
         if (attempt < maxAttempts) {
-          await sleep(intervalMs);
+          await sleepWithStop(intervalMs);
           continue;
         }
         break;
@@ -283,7 +301,7 @@ if (window.__MULTIPAGE_MAIL_2925_LOADED) {
       }
 
       if (attempt < maxAttempts) {
-        await sleep(intervalMs);
+        await sleepWithStop(intervalMs);
       }
     }
 
@@ -303,7 +321,28 @@ if (window.__MULTIPAGE_MAIL_2925_LOADED) {
     element.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
   }
 
-  function sleep(ms) {
-    return new Promise((resolve) => setTimeout(resolve, ms));
+  function guardStop() {
+    if (typeof throwIfStopped === 'function') {
+      throwIfStopped();
+    }
+  }
+
+  async function pause(ms) {
+    if (typeof globalThis.sleep === 'function' && globalThis.sleep !== pause) {
+      await globalThis.sleep(ms);
+      return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
+  async function sleepWithStop(ms) {
+    let remaining = Math.max(0, Number(ms) || 0);
+    while (remaining > 0) {
+      guardStop();
+      const chunk = Math.min(100, remaining);
+      await pause(chunk);
+      remaining -= chunk;
+    }
+    guardStop();
   }
 }
