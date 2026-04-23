@@ -324,3 +324,114 @@ test('mail-2925 opens the matching mail detail when the list row has no visible 
   assert.equal(result?.code, '112233');
   assert.equal(detailOpened, true);
 });
+
+test('mail-2925 waits for the detail view to finish loading before reading the code from body text', async () => {
+  const context = createContext();
+  const state = context.__state;
+  let detailOpened = false;
+  let detailReady = false;
+
+  const mailItem = {
+    textContent: 'OpenAI verification email',
+    querySelector(selector) {
+      if (selector === '.mail-content-title') {
+        return {
+          getAttribute(name) {
+            return name === 'title' ? 'Your ChatGPT verification code' : '';
+          },
+          textContent: 'Your ChatGPT verification code',
+        };
+      }
+      if (selector === '.mail-content-text') {
+        return { textContent: 'OpenAI security message' };
+      }
+      if (selector === 'td.content, .content, .mail-content') {
+        return { textContent: 'OpenAI security message' };
+      }
+      if (selector === 'td.sender, .sender') {
+        return {
+          querySelector(innerSelector) {
+            if (innerSelector === '.ivu-tooltip-rel') {
+              return { textContent: 'OpenAI' };
+            }
+            if (innerSelector === '.ivu-tooltip-inner') {
+              return { textContent: 'noreply@tm.openai.com' };
+            }
+            return null;
+          },
+          textContent: 'OpenAI noreply@tm.openai.com',
+        };
+      }
+      if (selector === '.date-time-text, [class*="date-time"], [class*="time"], td.time') {
+        return null;
+      }
+      return null;
+    },
+    getAttribute() {
+      return '';
+    },
+    dispatchEvent(event) {
+      if (event?.type === 'click') {
+        detailOpened = true;
+      }
+      return true;
+    },
+  };
+
+  context.sleep = async () => {
+    state.sleepCalls += 1;
+    if (detailOpened && state.sleepCalls >= 20) {
+      detailReady = true;
+    }
+  };
+  context.document.body = {
+    get innerText() {
+      return detailReady ? 'Your ChatGPT code is 445566' : 'Opening message...';
+    },
+    get textContent() {
+      return detailReady ? 'Your ChatGPT code is 445566' : 'Opening message...';
+    },
+  };
+  context.document.querySelector = (selector) => {
+    if (detailReady && selector === 'div.delete[data-t="删除"][title="删除"].tool-common') {
+      return { offsetParent: {} };
+    }
+    return null;
+  };
+  context.document.querySelectorAll = (selector) => {
+    if (selector === '.mail-item') {
+      return [mailItem];
+    }
+    return [];
+  };
+
+  loadMail2925Script(context);
+
+  const listener = context.__listeners[0];
+  assert.ok(listener, 'expected the 2925 content script to register a runtime listener');
+
+  const result = await new Promise((resolve, reject) => {
+    const response = listener({
+      type: 'POLL_EMAIL',
+      step: 4,
+      payload: {
+        senderFilters: ['openai', 'tm.openai.com'],
+        subjectFilters: ['verify', 'email'],
+        maxAttempts: 1,
+        intervalMs: 0,
+        filterAfterTimestamp: Date.now() - 60 * 1000,
+        excludeCodes: [],
+        targetEmail: '',
+      },
+    }, {}, (value) => resolve(value));
+
+    if (response !== true) {
+      reject(new Error('expected async response from mail-2925 listener'));
+    }
+  });
+
+  assert.equal(result?.ok, true);
+  assert.equal(result?.code, '445566');
+  assert.equal(detailOpened, true);
+  assert.equal(detailReady, true);
+});

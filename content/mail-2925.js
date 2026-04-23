@@ -239,11 +239,38 @@ if (window.__MULTIPAGE_MAIL_2925_LOADED) {
     }
   }
 
-  async function openMailDetailAndReadText(item) {
+  function isInDetailView() {
+    const detailDeleteBtn = document.querySelector('div.delete[data-t="删除"][title="删除"].tool-common');
+    const backBtn = document.querySelector('[class*="back"], [title*="返回"], [aria-label*="返回"]');
+    return Boolean(
+      (detailDeleteBtn && detailDeleteBtn.offsetParent !== null)
+      || (backBtn && backBtn.offsetParent !== null)
+    );
+  }
+
+  async function openMailDetailAndReadText(item, step) {
     guardStop();
     simulateClick(item);
-    await sleepWithStop(800);
-    return String(document.body?.innerText || document.body?.textContent || '');
+    let elapsedMs = 0;
+    let lastText = '';
+
+    while (elapsedMs < 2400) {
+      await sleepWithStop(200);
+      lastText = String(document.body?.innerText || document.body?.textContent || '');
+
+      if (isInDetailView()) {
+        return lastText;
+      }
+
+      if (extractVerificationCode(lastText)) {
+        return lastText;
+      }
+
+      elapsedMs += 200;
+    }
+
+    log(`Step ${step}: Failed to confirm the 2925 detail view after opening the email.`, 'warn');
+    return lastText;
   }
 
   async function handlePollEmail(step, payload) {
@@ -285,7 +312,7 @@ if (window.__MULTIPAGE_MAIL_2925_LOADED) {
         const candidateText = getMailItemText(item);
         const code = extractVerificationCode(candidateText);
         if (!code) {
-          const detailText = await openMailDetailAndReadText(item);
+          const detailText = await openMailDetailAndReadText(item, step);
           const detailCode = extractVerificationCode(detailText);
           if (detailCode) {
             log(`Step ${step}: Code found in 2925 mail detail: ${detailCode}`, 'ok');
