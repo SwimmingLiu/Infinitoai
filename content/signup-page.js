@@ -1033,6 +1033,9 @@ async function waitForVerificationSubmissionOutcome(step, hadRejectedStateBefore
     throwIfStopped();
 
     const visibleText = getVisiblePageText();
+    if (await waitForAuthHumanVerificationIfPresent(step)) {
+      continue;
+    }
     const hasVisibleProfileInput = hasVisibleProfileFormInput();
     const onReadyProfilePage = hasReadyProfilePage(visibleText);
     const onCanonicalAboutYouPage = step === 4
