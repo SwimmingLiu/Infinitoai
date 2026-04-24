@@ -12,8 +12,8 @@ test('content script response timeout stays disabled for long-running TMailor ma
   assert.equal(getContentScriptResponseTimeout('tmailor-mail', 'POLL_EMAIL'), 0);
 });
 
-test('content script response timeout defaults to 60s for signup-page commands', () => {
-  assert.equal(getContentScriptResponseTimeout('signup-page', 'EXECUTE_STEP'), 60000);
+test('content script response timeout stays disabled for signup-page execute steps that may wait on manual auth verification', () => {
+  assert.equal(getContentScriptResponseTimeout('signup-page', 'EXECUTE_STEP'), 0);
   assert.equal(
     buildContentScriptResponseTimeoutError('signup-page', 60000),
     'Content script on signup-page did not respond in 60s. Try refreshing the tab and retry.'
