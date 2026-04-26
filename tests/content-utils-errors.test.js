@@ -145,6 +145,27 @@ test('reportComplete returns the runtime delivery promise for navigation-sensiti
   await reportPromise;
 });
 
+test('reportComplete ignores transient closed-channel errors when callers fire-and-forget the completion signal', async () => {
+  const disconnectedError = new Error('A listener indicated an asynchronous response by returning true, but the message channel closed before a response was received');
+  const context = loadUtilsContext();
+  context.chrome.runtime.sendMessage = (message) => {
+    context.__sentMessages.push(message);
+    return Promise.reject(disconnectedError);
+  };
+
+  context.__sentMessages.length = 0;
+
+  const rejections = await collectUnhandledRejections(() => {
+    context.reportComplete(5, { recovered: false });
+  });
+
+  assert.equal(rejections.length, 0);
+  assert.deepEqual(
+    context.__sentMessages.map((message) => message.type),
+    ['LOG', 'STEP_COMPLETE']
+  );
+});
+
 test('fire-and-forget runtime messages ignore transient receiving-end disconnects during extension reload', async () => {
   const disconnectedError = new Error('Could not establish connection. Receiving end does not exist.');
   const context = loadUtilsContext();

@@ -1,6 +1,6 @@
 // background.js — Service Worker: orchestration, state, tab management, message routing
 
-importScripts('shared/email-addresses.js', 'shared/mail-provider-rotation.js', 'shared/tmailor-domains.js', 'shared/tmailor-api.js', 'shared/tmailor-errors.js', 'shared/tmailor-mailbox-strategy.js', 'shared/tmailor-verification-profiles.js', 'shared/flow-recovery.js', 'shared/content-script-queue.js', 'shared/login-verification-codes.js', 'data/names.js', 'shared/flow-runner.js', 'shared/runtime-errors.js', 'shared/auto-run.js', 'shared/auto-run-failure-stats.js', 'shared/duck-mail-errors.js', 'shared/sidepanel-settings.js', 'shared/tab-reclaim.js', 'shared/account-records.js');
+importScripts('shared/email-addresses.js', 'shared/mail-provider-rotation.js', 'shared/tmailor-domains.js', 'shared/tmailor-api.js', 'shared/tmailor-errors.js', 'shared/tmailor-mailbox-strategy.js', 'shared/tmailor-verification-profiles.js', 'shared/flow-recovery.js', 'shared/content-script-queue.js', 'shared/login-verification-codes.js', 'data/profile-seeds.js', 'data/names.js', 'shared/flow-runner.js', 'shared/runtime-errors.js', 'shared/auto-run.js', 'shared/auto-run-failure-stats.js', 'shared/duck-mail-errors.js', 'shared/sidepanel-settings.js', 'shared/tab-reclaim.js', 'shared/account-records.js');
 
 const LOG_PREFIX = '[Infinitoai:bg]';
 const DUCK_AUTOFILL_URL = 'https://duckduckgo.com/email/settings/autofill';
@@ -286,6 +286,7 @@ const DEFAULT_STATE = {
   oauthUrl: null,
   email: null,
   password: null,
+  profileSeed: null,
   accounts: [], // { email, password, createdAt }
   accountRecords: [],
   currentAccountRecordId: null,
@@ -648,6 +649,28 @@ async function setPasswordState(password) {
   broadcastDataUpdate({ password });
 }
 
+function resolveProfileSeed(seed = null) {
+  const normalizedSeed = typeof normalizeProfileSeed === 'function'
+    ? normalizeProfileSeed(seed)
+    : null;
+
+  if (normalizedSeed) {
+    return normalizedSeed;
+  }
+
+  if (typeof pickRandomProfileSeed === 'function') {
+    return pickRandomProfileSeed();
+  }
+
+  return null;
+}
+
+async function setProfileSeedState(profileSeed) {
+  const normalizedSeed = resolveProfileSeed(profileSeed);
+  await setState({ profileSeed: normalizedSeed });
+  return normalizedSeed;
+}
+
 function normalizeRejectedVerificationCodes(codes = []) {
   const result = [];
   for (const code of codes || []) {
@@ -894,8 +917,11 @@ async function closeAutoRunRoundTabs() {
   await setState({ tabRegistry: nextRegistry });
 
   if (!tabIdsToClose.length) {
+
     return;
+
   }
+
 
   try {
     await chrome.tabs.remove(tabIdsToClose);
@@ -4169,9 +4195,11 @@ async function executeStep3(state) {
     throw new Error('No email address. Paste email in Side Panel first.');
   }
 
-  const password = state.customPassword || state.password || generatePassword();
+  const profileSeed = resolveProfileSeed(state.profileSeed);
+  const password = state.customPassword || state.password || (profileSeed && profileSeed.password) || generatePassword();
   await setEmailState(email);
   await setPasswordState(password);
+  await setProfileSeedState(profileSeed);
   if (emailSource === 'tmailor') {
     await setTmailorEmailLease({
       email,
@@ -4231,7 +4259,7 @@ function isCanonicalEmailVerificationUrl(url = '') {
 }
 
 function isStep3RecoveredAuthPageReady(pageState = {}) {
-  if (pageState?.hasFatalError || pageState?.hasAuthOperationTimedOut || pageState?.isReachable === false) {
+  if (pageState?.hasFatalError || pageState?.hasAuthOperationTimedOut || pageState?.isReachable === false || pageState?.hasHumanVerificationChallenge) {
     return false;
   }
 
@@ -4912,6 +4940,8 @@ async function getSignupAuthPageState() {
         isReachable: true,
         requiresPhoneVerification: false,
         hasUnsupportedEmail: false,
+        hasHumanVerificationChallenge: false,
+        authChallengeKind: '',
         hasFatalError: false,
         hasAuthOperationTimedOut: false,
         hasVisibleCredentialInput: false,
@@ -4933,6 +4963,8 @@ async function getSignupAuthPageState() {
       isReachable: true,
       requiresPhoneVerification: false,
       hasUnsupportedEmail: false,
+      hasHumanVerificationChallenge: false,
+      authChallengeKind: '',
       hasFatalError: false,
       hasAuthOperationTimedOut: false,
       hasVisibleCredentialInput: false,
@@ -4952,6 +4984,8 @@ async function getSignupAuthPageState() {
       isReachable: false,
       requiresPhoneVerification: false,
       hasUnsupportedEmail: false,
+      hasHumanVerificationChallenge: false,
+      authChallengeKind: '',
       hasFatalError: false,
       hasAuthOperationTimedOut: false,
       hasVisibleCredentialInput: false,
@@ -5281,6 +5315,19 @@ async function ensureSignupPageReadyForVerification(state, step = 4) {
       throw new Error(`Step ${step} blocked: auth page showed a fatal error before the verification email step.`);
     }
 
+    if (pageState?.hasHumanVerificationChallenge) {
+      consecutiveVerificationShortcutSignals = 0;
+      if (!hasLoggedAmbiguousPageWait) {
+        hasLoggedAmbiguousPageWait = true;
+        await addLog(
+          `Step ${step}: Auth page is waiting on a human-verification challenge. Waiting for the current tab to clear it before checking the inbox...`,
+          'warn'
+        );
+      }
+      await sleepWithStop(1000);
+      continue;
+    }
+
     const blockerMessage = getVerificationMailStepPollingBlocker(step, pageState);
     if (blockerMessage) {
       throw new Error(blockerMessage);
@@ -5387,16 +5434,37 @@ async function executeVerificationMailStep(step, state, options) {
   }
 
   const rejectedCodes = new Set(getRejectedVerificationCodesForStep(step, state));
+
   let currentFilterAfterTimestamp = filterAfterTimestamp;
-  const maxInboxChecks = 4;
-  let resendTriggered = false;
+
+  const maxInboxChecks = step >= 7 ? 10 : 8;
+
+
+
+  const perPollMaxAttempts = step >= 7 ? 32 : 28;
+
+
+
+  let resendCount = 0;
+
+  const maxResendCount = step >= 7 ? 4 : 5;
+
+
 
   for (let inboxCheck = 1; inboxCheck <= maxInboxChecks; inboxCheck++) {
-    if (inboxCheck > 1) {
-      await addLog(`Step ${step}: Still checking the inbox for a fresh verification email...`, 'info');
-    }
+
+    await addLog(
+
+      `第 ${step} 步：开始第 ${inboxCheck}/${maxInboxChecks} 轮收件箱检查（单轮最多轮询 ${perPollMaxAttempts} 次，已重发 ${resendCount}/${maxResendCount} 次，已排除 ${rejectedCodes.size} 个旧验证码）。`,
+
+      inboxCheck === 1 ? 'info' : 'warn'
+
+    );
+
+
 
     let result = null;
+
 
     try {
       result = await pollVerificationCodeFromMail(step, mail, {
@@ -5410,8 +5478,10 @@ async function executeVerificationMailStep(step, state, options) {
             rejectedCodes: [...rejectedCodes],
           })
           : [...rejectedCodes],
-        maxAttempts: 20,
+        maxAttempts: perPollMaxAttempts,
+
         intervalMs: 3000,
+
       });
     } catch (err) {
       const errorMessage = err?.message || '';
@@ -5427,12 +5497,21 @@ async function executeVerificationMailStep(step, state, options) {
         throw new Error(blockerMessage);
       }
 
+      const resendTriggered = resendCount >= maxResendCount;
+
+
       if (!resendTriggered && inboxCheck >= resendAfterAttempts) {
-        await addLog(`第 ${step} 步：连续检查 ${inboxCheck} 次仍没有新邮件，先触发一次重发，再继续检查。`, 'warn');
+
+        resendCount += 1;
+
+        await addLog(`第 ${step} 步：连续检查 ${inboxCheck} 次仍没有新邮件，触发第 ${resendCount} 次重发后继续检查。`, 'warn');
+
         await clickResendOnSignupPage(step);
-        resendTriggered = true;
+
         continue;
+
       }
+
 
       if (inboxCheck >= maxInboxChecks) {
         throw err;
@@ -5448,14 +5527,36 @@ async function executeVerificationMailStep(step, state, options) {
       }
     }
 
-    await addLog(`Step ${step}: Got verification code: ${result.code}`);
+    await addLog(
+
+      `第 ${step} 步：拿到验证码 ${result.code}，准备进行第 ${rejectedCodes.size + 1} 次验证码提交。`,
+
+      'info'
+
+    );
+
     const submitResult = await submitVerificationCode(step, result.code);
 
+
+
     if (submitResult?.retryInbox) {
+
       rejectedCodes.add(result.code);
+
       await rememberRejectedVerificationCode(step, result.code);
+
+      await addLog(
+
+        `第 ${step} 步：第 ${rejectedCodes.size} 次验证码提交未通过（${submitResult.reason || 'retryInbox'}），返回邮箱继续获取新验证码。`,
+
+        'warn'
+
+      );
+
       continue;
+
     }
+
 
     if (step === 4) {
       await clearRejectedVerificationCodes(step);
@@ -5485,7 +5586,8 @@ async function executeVerificationMailStep(step, state, options) {
     return;
   }
 
-  throw new Error(`Step ${step}: Verification code kept being rejected after ${maxInboxChecks} inbox refresh attempts.`);
+  throw new Error(`Step ${step}: Verification code kept being rejected after ${maxInboxChecks} inbox refresh attempts (resend attempts=${resendCount}, per-poll max attempts=${perPollMaxAttempts}).`);
+
 }
 
 async function executeStep4(state) {
@@ -5501,11 +5603,17 @@ async function executeStep4(state) {
 
   const effectiveState = await ensureSignupPageReadyForVerification(state, 4);
   await executeVerificationMailStep(4, effectiveState, {
+
     filterAfterTimestamp: effectiveState.flowStartTime || 0,
+
     ...getTmailorVerificationProfile(4),
-    resendAfterAttempts: 3,
+
+    resendAfterAttempts: 2,
+
     persistLastEmailTimestamp: true,
+
   });
+
 }
 
 async function ensureSignupPageReadyForProfile(state, step = 5) {
@@ -5608,8 +5716,9 @@ async function executeStep5(state) {
     return;
   }
 
-  const { firstName, lastName } = generateRandomName();
-  const { year, month, day } = generateRandomBirthday();
+  const profileSeed = await setProfileSeedState(state.profileSeed);
+  const { firstName, lastName } = profileSeed || generateRandomName();
+  const { year, month, day } = profileSeed || generateRandomBirthday();
   const profileReadyState = await ensureSignupPageReadyForProfile(state, 5);
 
   if (isStableStep5SuccessUrl(profileReadyState?.url)) {
@@ -5800,16 +5909,27 @@ async function recoverStep3PlatformLogin(error, options = {}) {
 }
 
 async function recoverStep6PlatformLogin(error, options = {}) {
+
   const state = await getState();
+
   const message = error?.message || String(error || 'unknown step 6 error');
+
   const attempt = Math.max(0, Number.parseInt(String(options?.attempt ?? 0), 10) || 0);
+
   const maxAttempts = Math.max(attempt, Number.parseInt(String(options?.maxAttempts ?? 0), 10) || 0);
+
   const retryLabel = attempt > 0 && maxAttempts > 0
+
     ? ` (retry ${attempt}/${maxAttempts})`
+
     : attempt > 0
+
       ? ` (retry ${attempt})`
+
       : '';
+
   const refreshCopy = 'Refreshing the VPS OAuth link and reopening the auth login page';
+
   await addLog(
     `Step 6: ${message} ${refreshCopy}${retryLabel} with the current email/password...`,
     'warn'
@@ -5917,6 +6037,7 @@ async function waitForStep6CompletionSignalOrRecoveredAuthState() {
         pageState?.url
         && !pageState?.hasVisibleCredentialInput
         && !isExistingAccountLoginPasswordPageUrl(pageState?.url)
+        && !pageState?.hasHumanVerificationChallenge
         && !pageState?.requiresPhoneVerification
         && !pageState?.hasFatalError
         && !pageState?.hasAuthOperationTimedOut
@@ -5945,11 +6066,17 @@ async function waitForStep6CompletionSignalOrRecoveredAuthState() {
 async function executeStep7(state) {
   const effectiveState = await ensureSignupPageReadyForVerification(state, 7);
   await executeVerificationMailStep(7, effectiveState, {
+
     filterAfterTimestamp: effectiveState.lastEmailTimestamp || effectiveState.flowStartTime || 0,
+
     ...getTmailorVerificationProfile(7),
-    resendAfterAttempts: 3,
+
+    resendAfterAttempts: 2,
+
     persistLastEmailTimestamp: false,
+
   });
+
 }
 
 async function inspectSignupPageRecoveryState(expectedUrl) {
@@ -6304,96 +6431,217 @@ async function executeStep8(state) {
 // ============================================================
 
 async function executeStep9(state) {
+
   let effectiveState = state;
 
-  if (!effectiveState.localhostUrl) {
-    const recoveryState = await inspectSignupPageRecoveryState(effectiveState.oauthUrl);
-    if (recoveryState.reason) {
-      const detail = recoveryState.url || recoveryState.title || recoveryState.reason;
-      effectiveState = await replaySteps6Through8WithCurrentAccount(
-        `Step 9: Step 8 did not land on localhost and instead ended on ${detail}. Refreshing the VPS OAuth link and replaying steps 6-8 with the same account...`
-      );
-    }
-  }
+
 
   if (!effectiveState.localhostUrl) {
+
+    const recoveryState = await inspectSignupPageRecoveryState(effectiveState.oauthUrl);
+
+
+
+    if (recoveryState.reason) {
+
+
+
+      const detail = recoveryState.url || recoveryState.title || recoveryState.reason;
+
+
+
+      effectiveState = await replaySteps6Through8WithCurrentAccount(
+
+
+
+
+
+        `Step 9: Step 8 did not land on localhost and instead ended on ${detail}. Refreshing the VPS OAuth link and replaying steps 6-8 with the same account...`
+
+
+
+      );
+
+
+
+    }
+
+
+  }
+
+
+
+  if (!effectiveState.localhostUrl) {
+
     throw new Error('No localhost URL. Complete step 8 first.');
+
   }
+
   if (!effectiveState.vpsUrl) {
+
     throw new Error('VPS URL not set. Please enter VPS URL in the side panel.');
+
   }
+
+
 
   await addLog('Step 9: Opening VPS panel...');
 
+
+
   let tabId = await getTabId('vps-panel');
+
   const alive = tabId && await isTabAlive('vps-panel');
 
+
+
   if (!alive) {
+
     // Create new tab in the automation window
+
     const wid = await ensureAutomationWindowId();
+
     const tab = await chrome.tabs.create({ url: effectiveState.vpsUrl, active: true, windowId: wid });
+
     tabId = tab.id;
+
     await new Promise(resolve => {
+
       const listener = (tid, info) => {
+
         if (tid === tabId && info.status === 'complete') {
+
           chrome.tabs.onUpdated.removeListener(listener);
+
           resolve();
+
         }
+
       };
+
       chrome.tabs.onUpdated.addListener(listener);
+
     });
+
   } else {
+
     await chrome.tabs.update(tabId, { active: true });
+
   }
+
+
 
   // Inject scripts directly and wait for them to be ready
+
   await chrome.scripting.executeScript({
+
     target: { tabId },
+
     files: ['shared/flow-recovery.js', 'content/utils.js', 'content/vps-panel.js'],
+
   });
+
   await new Promise(r => setTimeout(r, 1000));
 
-  // Send command directly — bypass queue/ready mechanism
-  await addLog(`Step 9: Filling callback URL...`);
-  const response = await chrome.tabs.sendMessage(tabId, {
-    type: 'EXECUTE_STEP',
-    step: 9,
-    source: 'background',
-    payload: { localhostUrl: effectiveState.localhostUrl },
-  });
 
-  if (response?.retryWithFreshOauth) {
-    const refreshedState = await replaySteps6Through8WithCurrentAccount(
-      `Step 9: VPS reported that the authorization link is no longer pending (${response.detail || response.reason || 'not pending'}). Refreshing OAuth and retrying steps 6-9 with the same account...`
-    );
-    const retryTabId = await getTabId('vps-panel') || tabId;
-    const retryResponse = await chrome.tabs.sendMessage(retryTabId, {
+
+  const maxFreshOauthRetries = 3;
+
+
+
+  let lastFreshOauthReason = '';
+
+
+
+  for (let attempt = 0; attempt <= maxFreshOauthRetries; attempt += 1) {
+
+    const retryLabel = attempt > 0 ? `（刷新 OAuth 后第 ${attempt}/${maxFreshOauthRetries} 次重试）` : '（首次提交）';
+
+    await addLog(`第 9 步：准备提交回调 URL ${retryLabel}。`, attempt > 0 ? 'warn' : 'info');
+
+
+
+    const currentTabId = await getTabId('vps-panel') || tabId;
+
+    const response = await chrome.tabs.sendMessage(currentTabId, {
+
       type: 'EXECUTE_STEP',
+
       step: 9,
+
       source: 'background',
-      payload: { localhostUrl: refreshedState.localhostUrl },
+
+      payload: { localhostUrl: effectiveState.localhostUrl },
+
     });
 
-    if (retryResponse?.retryWithFreshOauth) {
-      const message = 'Step 9 failed again because the authorization link is still not pending after refreshing OAuth. Retry from step 6 once more or inspect the VPS panel manually.';
-      notifyStepError(9, message);
-      throw new Error(message);
+
+
+    if (response?.retryWithFreshOauth) {
+
+      lastFreshOauthReason = response.detail || response.reason || 'not pending';
+
+
+
+      if (attempt >= maxFreshOauthRetries) {
+
+        const message = `Step 9 failed after ${maxFreshOauthRetries} fresh OAuth retries because the authorization link is still not pending (${lastFreshOauthReason}). Retry from step 6 again or inspect the VPS panel manually.`;
+
+        notifyStepError(9, message);
+
+        throw new Error(message);
+
+      }
+
+
+
+      await addLog(
+
+        `第 9 步：第 ${attempt + 1}/${maxFreshOauthRetries + 1} 次最终认证遇到链接失效，准备刷新第 ${attempt + 1}/${maxFreshOauthRetries} 次 OAuth 链接后继续。原因：${lastFreshOauthReason}`,
+
+        'warn'
+
+      );
+
+
+
+      effectiveState = await replaySteps6Through8WithCurrentAccount(
+
+        `Step 9: VPS reported that the authorization link is no longer pending (${lastFreshOauthReason}). Refreshing OAuth and retrying the final authentication steps with the same account...`
+
+      );
+
+      continue;
+
     }
 
-    if (retryResponse?.error) {
-      throw new Error(retryResponse.error);
+
+
+    if (response?.error) {
+
+      throw new Error(response.error);
+
     }
+
+
+
+    await addLog(`第 9 步：第 ${attempt + 1}/${maxFreshOauthRetries + 1} 次最终认证提交流程已完成。`, 'ok');
 
     return;
+
   }
 
-  if (response?.error) {
-    throw new Error(response.error);
-  }
 }
 
-// ============================================================
-// Open Side Panel on extension icon click
+
+
 // ============================================================
 
+// Open Side Panel on extension icon click
+
+// ============================================================
+
+
+
 chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true });
+

@@ -49,6 +49,10 @@
       return 0;
     }
 
+    if (normalizedSource === 'signup-page' && normalizedType === 'EXECUTE_STEP') {
+      return 0;
+    }
+
     return 60000;
   }
 

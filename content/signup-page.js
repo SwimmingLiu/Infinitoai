@@ -131,6 +131,7 @@ async function step2_clickRegister(payload = {}) {
   log('Step 2: Looking for Register/Sign up button...');
   throwIfUnsupportedCountryRegionTerritoryBlocked(2);
 
+  await waitForAuthHumanVerificationIfPresent(2);
   await waitForPlatformEntryStateToSettle();
   await logoutFromPlatformChatSessionIfNeeded();
   throwIfStep2UnexpectedAuthLoginEntry();
@@ -723,6 +724,9 @@ async function waitForStep3SignupContext(timeout = 8000) {
     throwIfStopped();
 
     const visibleText = getVisiblePageText();
+    if (await waitForAuthHumanVerificationIfPresent(3)) {
+      continue;
+    }
     if (isSignupContextUrl(location.href)) {
       return true;
     }
@@ -874,6 +878,7 @@ async function fillVerificationCode(step, payload) {
   if (!code) throw new Error('No verification code provided.');
 
   log(`Step ${step}: Filling verification code: ${code}`);
+  await waitForAuthHumanVerificationIfPresent(step);
 
   // Find code input — could be a single input or multiple separate inputs
   let codeInput = null;
@@ -1021,85 +1026,181 @@ function submitVerificationCodeWithFallback(codeInput) {
 }
 
 async function waitForVerificationSubmissionOutcome(step, hadRejectedStateBeforeSubmit = false, timeout = 5000) {
+
   const startUrl = location.href;
+
   const start = Date.now();
 
+
+
   while (Date.now() - start < timeout) {
+
     throwIfStopped();
 
+
+
     const visibleText = getVisiblePageText();
+
     const hasVisibleProfileInput = hasVisibleProfileFormInput();
+
     const onReadyProfilePage = hasReadyProfilePage(visibleText);
+
     const onCanonicalAboutYouPage = step === 4
+
       && isCanonicalAboutYouPage(location.href)
+
       && !hasVisibleCredentialInput();
+
     const onCanonicalAboutYouProfilePage = onCanonicalAboutYouPage && hasVisibleProfileInput;
+
     const hasVisibleVerificationInputNow = hasVisibleVerificationInput();
+
     const hasVisibleInput = hasActiveVerificationInput();
+
     if (isBlockingAuthFatalError(visibleText)) {
+
       throw new Error('Auth fatal error page detected after verification submit.');
+
     }
+
     if (isUnsupportedEmailBlockingStep(step) && isUnsupportedEmailText(visibleText, location.href)) {
+
       throw new Error(getUnsupportedEmailBlockedMessage(step));
+
     }
+
     if (step === 7 && isPhoneVerificationRequiredText(visibleText, location.href)) {
+
       throw new Error(getPhoneVerificationBlockedMessage(step));
+
     }
+
     if (isVerificationCodeRejectedText(visibleText) && !hadRejectedStateBeforeSubmit) {
+
       return {
+
         retryInbox: true,
+
         reason: 'verification-code-rejected',
+
       };
+
     }
-    if (step === 7 && /email-verification/i.test(location.href) && !hasVisibleInput && isVerificationRetryStateText(visibleText)) {
-      throw new Error('Verification page entered retry state after submitting the verification code. Restart this run.');
+
+    if (
+
+      (step === 4 || step === 7)
+
+      && /email-verification/i.test(location.href)
+
+      && !hasVisibleInput
+
+      && isVerificationRetryStateText(visibleText)
+
+    ) {
+
+      return {
+
+        retryInbox: true,
+
+        reason: 'verification-page-retry-state',
+
+      };
+
     }
+
+
 
     if (location.href !== startUrl || onReadyProfilePage || onCanonicalAboutYouPage) {
+
       return {
+
         accepted: true,
+
         reason: onReadyProfilePage
+
           ? 'profile-form-visible'
+
           : (onCanonicalAboutYouPage ? 'canonical-about-you-profile-page' : 'page-advanced'),
+
       };
+
     }
+
+
 
     if (!hasVisibleVerificationInputNow && !hasVisibleProfileInput && !hasVerificationContextText(visibleText)) {
+
       return {
+
         accepted: true,
+
         reason: 'verification-form-hidden',
+
       };
+
     }
 
+
+
     await sleep(250);
+
   }
+
+
 
   if (hadRejectedStateBeforeSubmit && hasActiveVerificationInput()) {
+
     return {
+
       retryInbox: true,
+
       reason: 'verification-still-blocked',
+
     };
+
   }
+
+
 
   if (step === 4 && isCanonicalAboutYouPage(location.href) && !hasVisibleCredentialInput()) {
+
     return {
+
       accepted: true,
+
       reason: 'canonical-about-you-profile-page',
+
     };
+
   }
+
+
 
   if (hasActiveVerificationInput() || (hasVisibleProfileFormInput() && !hasReadyProfilePage(getVisiblePageText()))) {
+
     return {
+
       retrySubmit: true,
+
       reason: 'verification-still-visible',
+
     };
+
   }
 
+
+
   return {
+
     accepted: true,
+
     reason: 'no-rejection-detected',
+
   };
+
 }
+
 
 function getVisiblePageText() {
   const bodyText = document.body?.innerText || '';
@@ -1107,6 +1208,149 @@ function getVisiblePageText() {
     .map((el) => el.textContent || '')
     .join(' ');
   return `${bodyText} ${ariaText}`.trim();
+}
+
+const AUTH_HUMAN_VERIFICATION_HEARTBEAT_MS = 10000;
+
+function normalizeAuthPageText(text = '') {
+  return String(text || '').replace(/\s+/g, ' ').trim();
+}
+
+function hasAuthHumanVerificationText(text = getVisiblePageText()) {
+  const normalized = normalizeAuthPageText(text).toLowerCase();
+  if (!normalized) {
+    return false;
+  }
+
+  return /verify you are human|verify that you are not a robot|please verify that you are not a robot|please confirm you are not a robot|i am human|not a robot|security check|checking your browser|enable javascript and cookies to continue|just a moment|cloudflare/i.test(normalized);
+}
+
+function looksLikeAuthHumanVerificationShell(element) {
+  if (!element) {
+    return false;
+  }
+
+  const hintText = normalizeAuthPageText([
+    element.id,
+    element.className,
+    element.getAttribute?.('data-testid'),
+    element.getAttribute?.('aria-label'),
+    element.getAttribute?.('title'),
+  ].filter(Boolean).join(' ')).toLowerCase();
+
+  if (/cf-turnstile|turnstile|cloudflare|captcha|challenge|security/i.test(hintText)) {
+    return true;
+  }
+
+  return hasAuthHumanVerificationText(element.textContent || '');
+}
+
+function findVisibleAuthChallengeIframe() {
+  const selector = [
+    'iframe[src*="challenges.cloudflare.com"]',
+    'iframe[title*="Cloudflare"]',
+    'iframe[title*="security challenge"]',
+    'iframe[title*="Widget containing"]',
+  ].join(', ');
+
+  return Array.from(document.querySelectorAll(selector)).find(isElementVisible) || null;
+}
+
+function findVisibleAuthChallengeContainer() {
+  const selector = [
+    '.cf-turnstile',
+    '.html-captcha',
+    '[class*="cf-turnstile"]',
+    '[class*="turnstile"]',
+  ].join(', ');
+
+  const directMatch = Array.from(document.querySelectorAll(selector)).find(isElementVisible);
+  if (directMatch) {
+    return directMatch;
+  }
+
+  const responseInput = Array.from(document.querySelectorAll('input[name="cf-turnstile-response"], input[id*="cf-chl-widget"][id$="_response"]'))[0] || null;
+  if (!responseInput) {
+    return null;
+  }
+
+  let current = responseInput.parentElement || null;
+  while (current) {
+    if (isElementVisible(current) && looksLikeAuthHumanVerificationShell(current)) {
+      return current;
+    }
+    current = current.parentElement || null;
+  }
+
+  return looksLikeAuthHumanVerificationShell(responseInput) ? responseInput : null;
+}
+
+function getAuthHumanVerificationState(text = getVisiblePageText()) {
+  const iframe = findVisibleAuthChallengeIframe();
+  if (iframe) {
+    return {
+      active: true,
+      kind: 'cloudflare_turnstile',
+    };
+  }
+
+  const container = findVisibleAuthChallengeContainer();
+  if (container) {
+    return {
+      active: true,
+      kind: 'cloudflare_turnstile',
+    };
+  }
+
+  if (hasAuthHumanVerificationText(text)) {
+    return {
+      active: true,
+      kind: 'human_verification_text',
+    };
+  }
+
+  return {
+    active: false,
+    kind: '',
+  };
+}
+
+async function waitForAuthHumanVerificationIfPresent(step, options = {}) {
+  const timeoutMs = Number.isFinite(options?.timeoutMs) ? options.timeoutMs : 0;
+  const heartbeatMs = Number.isFinite(options?.heartbeatMs) && options.heartbeatMs > 0
+    ? options.heartbeatMs
+    : AUTH_HUMAN_VERIFICATION_HEARTBEAT_MS;
+
+  let challengeState = getAuthHumanVerificationState();
+  if (!challengeState.active) {
+    return false;
+  }
+
+  const start = Date.now();
+  let nextHeartbeatAt = 0;
+  log(`Step ${step}: Auth human verification detected (${challengeState.kind}). Waiting for manual completion in the current tab before resuming...`, 'warn');
+
+  while (challengeState.active) {
+    throwIfStopped();
+
+    const elapsedMs = Math.max(0, Date.now() - start);
+    if (elapsedMs >= nextHeartbeatAt) {
+      log(`Step ${step}: Still waiting for auth human verification to clear (${Math.max(1, Math.round(elapsedMs / 1000))}s elapsed; kind=${challengeState.kind}).`, 'info');
+      while (elapsedMs >= nextHeartbeatAt) {
+        nextHeartbeatAt += heartbeatMs;
+      }
+    }
+
+    if (timeoutMs > 0 && elapsedMs >= timeoutMs) {
+      throw new Error(`Step ${step} blocked: auth human verification is still visible. Complete the verification in the current tab and retry.`);
+    }
+
+    await sleep(250);
+    challengeState = getAuthHumanVerificationState();
+  }
+
+  log(`Step ${step}: Auth human verification cleared. Resuming automation...`, 'info');
+  return true;
 }
 
 function hasVerificationContextText(text = getVisiblePageText()) {
@@ -1238,11 +1482,14 @@ function hasStableNextPageAfterProfileSubmit(text = getVisiblePageText()) {
 
 function getAuthPageState() {
   const visibleText = getVisiblePageText();
+  const challengeState = getAuthHumanVerificationState(visibleText);
   return {
     hasAuthOperationTimedOut: isBlockingAuthOperationTimedOut(visibleText),
     hasFatalError: isBlockingAuthFatalError(visibleText),
     requiresPhoneVerification: isPhoneVerificationRequiredText(visibleText, location.href),
     hasUnsupportedEmail: isUnsupportedEmailText(visibleText, location.href),
+    hasHumanVerificationChallenge: challengeState.active,
+    authChallengeKind: challengeState.kind,
     hasVisibleSignupRegistrationChoice: hasVisibleSignupRegistrationChoice(visibleText, location.href),
     hasVisibleCredentialInput: hasVisibleCredentialInput(),
     hasVisibleVerificationInput: hasVisibleVerificationInput(),
@@ -1395,6 +1642,96 @@ async function waitForStep5NameInputOrRecoveredLanding(timeout = STEP5_NAME_INPU
   }
 
   return null;
+}
+
+function isCheckboxChecked(checkbox) {
+  if (!checkbox) {
+    return false;
+  }
+
+  if (typeof checkbox.checked === 'boolean') {
+    return checkbox.checked;
+  }
+
+  const ariaChecked = String(checkbox.getAttribute?.('aria-checked') || '').toLowerCase();
+  if (ariaChecked === 'true') {
+    return true;
+  }
+  if (ariaChecked === 'false') {
+    return false;
+  }
+
+  return String(checkbox.getAttribute?.('data-state') || '').toLowerCase() === 'checked';
+}
+
+function getConsentCheckboxText(checkbox) {
+  if (!checkbox) {
+    return '';
+  }
+
+  const labelText = Array.from(checkbox.labels || [])
+    .map((label) => label?.textContent || '')
+    .join(' ');
+  const closestLabelText = checkbox.closest?.('label')?.textContent || '';
+  const parentText = checkbox.parentElement?.textContent || '';
+  const ownText = checkbox.textContent || '';
+  const ariaLabel = checkbox.getAttribute?.('aria-label') || '';
+  const title = checkbox.getAttribute?.('title') || '';
+
+  return normalizeAuthPageText(
+    [labelText, closestLabelText, parentText, ownText, ariaLabel, title]
+      .filter(Boolean)
+      .join(' ')
+  );
+}
+
+function getVisibleConsentCheckboxes() {
+  return Array.from(document.querySelectorAll('input[type="checkbox"], [role="checkbox"]'))
+    .filter((checkbox) => isElementVisible(checkbox));
+}
+
+function isAllConsentCheckboxText(text = '') {
+  return /\u6211\u540c\u610f\u4ee5\u4e0b\u6240\u6709\u5404\u9879|\u540c\u610f\u4ee5\u4e0b\u6240\u6709\u5404\u9879|agree to all|accept all|all (?:items|consents|permissions)/i.test(String(text || ''));
+}
+
+function isRequiredConsentCheckboxText(text = '') {
+  return /\u5f3a\u5236|required|must accept|accept to continue|\u8bf7\u63a5\u53d7\u4ee5\u7ee7\u7eed/i.test(String(text || ''));
+}
+
+async function clickAboutYouConsentCheckbox(step, checkbox, description) {
+  if (!checkbox || isCheckboxChecked(checkbox)) {
+    return false;
+  }
+
+  await humanPause(350, 900);
+  simulateClick(checkbox);
+  await sleep(150);
+
+  if (!isCheckboxChecked(checkbox)) {
+    throw new Error(`Step ${step} blocked: could not accept the about-you ${description}.`);
+  }
+
+  log(`Step ${step}: Accepted the about-you ${description}.`);
+  return true;
+}
+
+async function acceptAboutYouConsentCheckboxesIfPresent(step = 5) {
+  const allConsentCheckbox = getVisibleConsentCheckboxes()
+    .find((checkbox) => !isCheckboxChecked(checkbox) && isAllConsentCheckboxText(getConsentCheckboxText(checkbox)));
+
+  let acceptedAny = false;
+  if (allConsentCheckbox) {
+    acceptedAny = await clickAboutYouConsentCheckbox(step, allConsentCheckbox, 'all-consent checkbox');
+  }
+
+  const requiredCheckboxes = getVisibleConsentCheckboxes()
+    .filter((checkbox) => !isCheckboxChecked(checkbox) && isRequiredConsentCheckboxText(getConsentCheckboxText(checkbox)));
+  for (const checkbox of requiredCheckboxes) {
+    await clickAboutYouConsentCheckbox(step, checkbox, 'required consent checkbox');
+    acceptedAny = true;
+  }
+
+  return acceptedAny;
 }
 
 async function waitForProfileSubmissionOutcome(step, timeout = STEP5_PROFILE_SUBMIT_OUTCOME_TIMEOUT_MS) {
@@ -1582,6 +1919,10 @@ async function waitForPasswordlessOrPasswordField(timeout = 10000) {
       };
     }
 
+    if (await waitForAuthHumanVerificationIfPresent(3)) {
+      continue;
+    }
+
     await sleep(250);
   }
 
@@ -1665,6 +2006,9 @@ async function waitForStep3CredentialSubmissionOutcome(startUrl, timeout = 8000)
     throwIfStopped();
 
     const visibleText = getVisiblePageText();
+    if (await waitForAuthHumanVerificationIfPresent(3)) {
+      continue;
+    }
     if (await handleAuthReturnHomeRecovery(3, visibleText)) {
       throw new Error(getAuthReturnHomeRecoveryErrorMessage(3));
     }
@@ -1773,6 +2117,9 @@ async function waitForLoginPasswordField(timeout = 25000) {
     }
 
     const visibleText = getVisiblePageText();
+    if (await waitForAuthHumanVerificationIfPresent(6)) {
+      continue;
+    }
     if (await handleAuthReturnHomeRecovery(6, visibleText)) {
       throw new Error(getAuthReturnHomeRecoveryErrorMessage(6));
     }
@@ -1799,6 +2146,9 @@ async function waitForLoginSubmissionOutcome(timeout = 12000) {
     throwIfStopped();
 
     const visibleText = getVisiblePageText();
+    if (await waitForAuthHumanVerificationIfPresent(6)) {
+      continue;
+    }
     if (await handleAuthReturnHomeRecovery(6, visibleText)) {
       throw new Error(getAuthReturnHomeRecoveryErrorMessage(6));
     }
@@ -2263,6 +2613,8 @@ async function step5_fillNameBirthday(payload) {
   }
 
   // Click "完成帐户创建" button
+  await acceptAboutYouConsentCheckboxesIfPresent(5);
+
   await sleep(500);
   const submitReadiness = await waitForProfileSubmitButtonOrOutcome(5);
   if (submitReadiness?.button) {

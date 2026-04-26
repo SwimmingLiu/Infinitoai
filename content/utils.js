@@ -316,13 +316,21 @@ function reportReady(payload = {}) {
 function reportComplete(step, data = {}) {
   console.log(LOG_PREFIX, `第 ${step} 步执行完成`, data);
   log(`第 ${step} 步执行完成`, 'ok');
-  return chrome.runtime.sendMessage({
+  const delivery = chrome.runtime.sendMessage({
     type: 'STEP_COMPLETE',
     source: SCRIPT_SOURCE,
     step,
     payload: data,
     error: null,
   });
+  if (delivery && typeof delivery.catch === 'function') {
+    delivery.catch((error) => {
+      if (!isIgnorableRuntimeMessageError(error)) {
+        console.error(LOG_PREFIX, 'STEP_COMPLETE delivery failed:', error?.message || error);
+      }
+    });
+  }
+  return delivery;
 }
 
 /**
