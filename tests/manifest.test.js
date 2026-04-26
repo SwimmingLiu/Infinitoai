@@ -20,3 +20,10 @@ test('manifest declares the minimum Chrome version required by the Side Panel AP
     default_path: 'sidepanel/sidepanel.html',
   });
 });
+
+test('manifest declares browsingData permission for targeted site-session cleanup', () => {
+  const manifest = readManifest();
+
+  assert.ok(Array.isArray(manifest.permissions));
+  assert.ok(manifest.permissions.includes('browsingData'));
+});

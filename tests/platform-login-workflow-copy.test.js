@@ -287,6 +287,42 @@ test('step 2 navigation fallback reopens the platform login entry when recovery 
   );
 });
 
+test('fresh pipeline preparation clears OpenAI, ChatGPT, and TMailor site data without touching the CPA panel state', () => {
+  const backgroundSource = readProjectFile('background.js');
+  const originListMatch = backgroundSource.match(
+    /const FRESH_PIPELINE_SITE_DATA_ORIGINS = \[[\s\S]*?\];/i
+  );
+
+  assert.match(
+    backgroundSource,
+    /const FRESH_PIPELINE_SITE_DATA_ORIGINS = \[[\s\S]*https:\/\/platform\.openai\.com[\s\S]*https:\/\/auth\.openai\.com[\s\S]*https:\/\/auth0\.openai\.com[\s\S]*https:\/\/accounts\.openai\.com[\s\S]*https:\/\/chatgpt\.com[\s\S]*https:\/\/tmailor\.com[\s\S]*\];/i
+  );
+  assert.match(
+    backgroundSource,
+    /async function clearFreshPipelineSiteData\(options = \{\}\) \{[\s\S]*chrome\.browsingData\.remove\(\s*\{\s*origins:\s*FRESH_PIPELINE_SITE_DATA_ORIGINS\s*\},\s*\{[\s\S]*cookies:\s*true[\s\S]*indexedDB:\s*true[\s\S]*localStorage:\s*true[\s\S]*serviceWorkers:\s*true[\s\S]*webSQL:\s*true[\s\S]*\}\s*\)/i
+  );
+  assert.ok(originListMatch, 'expected a dedicated fresh-pipeline origin list');
+  assert.doesNotMatch(originListMatch[0], /panel\.example\.com|vpsUrl|cpa/i);
+});
+
+test('auto-run clears targeted auth and mailbox site data before each new account pipeline starts', () => {
+  const backgroundSource = readProjectFile('background.js');
+
+  assert.match(
+    backgroundSource,
+    /await closeAutoRunRoundTabs\(\);[\s\S]*await clearFreshPipelineSiteData\(\{[\s\S]*reason:\s*'auto-run-fresh-pipeline'[\s\S]*\}\);[\s\S]*await resetState\(\{ preserveLogHistory:\s*true \}\);/i
+  );
+});
+
+test('manual step-2 restarts also clear targeted auth and mailbox site data before reopening the platform login entry', () => {
+  const backgroundSource = readProjectFile('background.js');
+
+  assert.match(
+    backgroundSource,
+    /async function runManualFlow\(startStep\) \{[\s\S]*if \(Number\(startStep\) === 2\) \{[\s\S]*await clearFreshPipelineSiteData\(\{[\s\S]*reason:\s*'manual-step2-fresh-pipeline'[\s\S]*\}\);[\s\S]*\}/i
+  );
+});
+
 test('step 2 throws a recoverable error when the signup auth page never becomes ready again after navigation interruption', () => {
   const backgroundSource = readProjectFile('background.js');
 

@@ -10,6 +10,7 @@
     "webNavigation",
     "debugger",
     "storage",
+    "browsingData",
     "alarms",
     "scripting",
     "activeTab",
