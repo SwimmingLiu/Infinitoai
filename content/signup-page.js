@@ -2198,7 +2198,7 @@ function getLoginCredentialErrorMessage() {
   return 'Incorrect email address or password.';
 }
 
-function isAuthReturnHomeIssueText(text) {
+function isAuthReturnHomeIssueTextLegacy(text) {
   const normalized = String(text || '').replace(/\s+/g, ' ').trim();
   if (!normalized) {
     return false;
@@ -2222,6 +2222,28 @@ function getAuthReturnHomeRecoveryErrorMessage(step) {
     return 'Step 6 recoverable: auth issue page offered a "return home" recovery link. Refresh the VPS OAuth link and retry with the same email and password.';
   }
   return 'Step 3 blocked: auth issue page offered a "return home" recovery link. Reopen the platform login page and retry with the same email and password.';
+}
+
+function isAuthReturnHomeIssueText(text) {
+  const normalized = String(text || '').replace(/\s+/g, ' ').trim();
+  if (!normalized) {
+    return false;
+  }
+
+  if (/we ran into an issue while authenticating you/i.test(normalized)) {
+    return true;
+  }
+
+  if (/authentication token has been invalidated/i.test(normalized)) {
+    return true;
+  }
+
+  if (/invalid[_\s-]?state/i.test(normalized)) {
+    return true;
+  }
+
+  return /something went wrong|oops/i.test(normalized)
+    && /authenticating you|help\.openai\.com|authentication token has been invalidated|sign(?:ing)? in again|retry/i.test(normalized);
 }
 
 function isAuthRetryActionIssueText(text) {

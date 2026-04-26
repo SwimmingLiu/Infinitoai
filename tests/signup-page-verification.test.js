@@ -2225,6 +2225,83 @@ test('step 2 waits for the invalid_state issue page and clicks return home befor
   ]);
 });
 
+test('step 2 recovers from the invalidated-authentication-token issue page by clicking return to homepage', async () => {
+  const state = {
+    issueVisible: false,
+    recovered: false,
+  };
+
+  const returnHomeLink = {
+    textContent: 'Return to homepage',
+    getBoundingClientRect() {
+      return { width: 180, height: 44 };
+    },
+  };
+  const registerButton = {
+    textContent: 'Sign up',
+    getBoundingClientRect() {
+      return { width: 160, height: 44 };
+    },
+  };
+  const clickedTargets = [];
+
+  const context = createContext({
+    href: 'https://platform.openai.com/login',
+    bodyText: 'Oops! Your authentication token has been invalidated. Please try signing in again. Return to homepage',
+    waitForElementByTextImpl(_selector, pattern) {
+      const normalizedPattern = String(pattern);
+      if (/返回首页|return home|back to home|home/i.test(normalizedPattern) && state.issueVisible) {
+        return Promise.resolve(returnHomeLink);
+      }
+      if (/sign\s*up|register|create\s*account|注册/i.test(normalizedPattern) && state.recovered && /platform\.openai\.com\/login/i.test(context.location.href)) {
+        return Promise.resolve(registerButton);
+      }
+      return Promise.reject(new Error('missing'));
+    },
+  });
+  context.sleep = async () => {
+    state.issueVisible = true;
+  };
+  context.simulateClick = (target) => {
+    clickedTargets.push(target);
+    if (target === returnHomeLink) {
+      state.recovered = true;
+      context.location.href = 'https://auth.openai.com/log-in';
+      context.document.body.innerText = 'Welcome back Log in Sign up';
+      return;
+    }
+    if (target === registerButton) {
+      context.location.href = 'https://auth.openai.com/u/signup/identifier';
+      context.document.body.innerText = 'Create your account';
+    }
+  };
+
+  loadSignupPage(context);
+
+  const listener = context.__listeners[0];
+  assert.ok(listener, 'expected signup-page to register a runtime listener');
+
+  const response = await new Promise((resolve, reject) => {
+    const keepAlive = listener(
+      { type: 'EXECUTE_STEP', step: 2, payload: {} },
+      {},
+      (result) => resolve(result)
+    );
+    assert.equal(keepAlive, true);
+    setTimeout(() => reject(new Error('timeout waiting for response')), 3000);
+  });
+
+  assert.equal(response?.ok, true);
+  assert.deepEqual(clickedTargets, [returnHomeLink, registerButton]);
+  assert.deepEqual(context.__errors, []);
+  assert.deepEqual(context.__completions, [
+    {
+      step: 2,
+      payload: undefined,
+    },
+  ]);
+});
+
 test('step 2 recovers from the auth issue page when it appears after the initial platform settle window', async () => {
   const state = {
     issueVisible: false,
