@@ -90,7 +90,7 @@ const {
   isTmailorApiCaptchaCooldownActive,
   pollTmailorVerificationCode,
 } = TmailorApi;
-const { buildReclaimableTabRegistry, shouldPrepareSameUrlTabForReuse, shouldReuseActiveTabOnCreate } = TabReclaim;
+const { buildReclaimableTabRegistry, pickAutomationWindowId, shouldPrepareSameUrlTabForReuse, shouldReuseActiveTabOnCreate } = TabReclaim;
 const {
   buildStep8RedirectHeartbeatMessage,
   getMailTabOpenUrlForStep,
@@ -247,27 +247,45 @@ function getNormalizedLogHistory(state = {}) {
   };
 }
 
-async function ensureAutomationWindowId() {
-  if (automationWindowId != null) {
-    try {
-      await chrome.windows.get(automationWindowId);
-      return automationWindowId;
-    } catch {
-      automationWindowId = null;
+async function getFocusedNormalWindowId() {
+  try {
+    const focusedWindow = await chrome.windows.getLastFocused({
+      populate: false,
+      windowTypes: ['normal'],
+    });
+    if (Number.isFinite(focusedWindow?.id)) {
+      return focusedWindow.id;
     }
-  }
+  } catch {}
+
+  const fallbackWindow = await chrome.windows.getLastFocused();
+  return Number.isFinite(fallbackWindow?.id) ? fallbackWindow.id : null;
+}
+
+async function ensureAutomationWindowId(source = '') {
   const registry = await getTabRegistry();
-  for (const entry of Object.values(registry)) {
-    if (entry.tabId) {
-      try {
-        const tab = await chrome.tabs.get(entry.tabId);
-        automationWindowId = tab.windowId;
-        return automationWindowId;
-      } catch {}
-    }
+  let sourceWindowId = null;
+  const sourceEntry = source ? registry[source] : null;
+  if (sourceEntry?.tabId) {
+    try {
+      const sourceTab = await chrome.tabs.get(sourceEntry.tabId);
+      sourceWindowId = sourceTab.windowId;
+    } catch {}
   }
-  const win = await chrome.windows.getLastFocused();
-  automationWindowId = win.id;
+
+  const focusedWindowId = await getFocusedNormalWindowId();
+  const nextWindowId = pickAutomationWindowId({
+    sourceWindowId,
+    focusedWindowId,
+    cachedWindowId: automationWindowId,
+  });
+
+  if (Number.isFinite(nextWindowId)) {
+    automationWindowId = nextWindowId;
+    return automationWindowId;
+  }
+
+  automationWindowId = null;
   return automationWindowId;
 }
 
@@ -917,11 +935,8 @@ async function closeAutoRunRoundTabs() {
   await setState({ tabRegistry: nextRegistry });
 
   if (!tabIdsToClose.length) {
-
     return;
-
   }
-
 
   try {
     await chrome.tabs.remove(tabIdsToClose);
@@ -1315,7 +1330,7 @@ async function reuseOrCreateTab(source, url, options = {}) {
   }
 
   // Create new tab in the automation window
-  const wid = await ensureAutomationWindowId();
+  const wid = await ensureAutomationWindowId(source);
   if (shouldReuseActiveTabOnCreate(source, options)) {
     const reusableActiveTab = await findReusableActiveTabForSource(source, wid);
     if (reusableActiveTab) {
@@ -5434,37 +5449,16 @@ async function executeVerificationMailStep(step, state, options) {
   }
 
   const rejectedCodes = new Set(getRejectedVerificationCodesForStep(step, state));
-
   let currentFilterAfterTimestamp = filterAfterTimestamp;
-
-  const maxInboxChecks = step >= 7 ? 10 : 8;
-
-
-
-  const perPollMaxAttempts = step >= 7 ? 32 : 28;
-
-
-
-  let resendCount = 0;
-
-  const maxResendCount = step >= 7 ? 4 : 5;
-
-
+  const maxInboxChecks = 4;
+  let resendTriggered = false;
 
   for (let inboxCheck = 1; inboxCheck <= maxInboxChecks; inboxCheck++) {
-
-    await addLog(
-
-      `第 ${step} 步：开始第 ${inboxCheck}/${maxInboxChecks} 轮收件箱检查（单轮最多轮询 ${perPollMaxAttempts} 次，已重发 ${resendCount}/${maxResendCount} 次，已排除 ${rejectedCodes.size} 个旧验证码）。`,
-
-      inboxCheck === 1 ? 'info' : 'warn'
-
-    );
-
-
+    if (inboxCheck > 1) {
+      await addLog(`Step ${step}: Still checking the inbox for a fresh verification email...`, 'info');
+    }
 
     let result = null;
-
 
     try {
       result = await pollVerificationCodeFromMail(step, mail, {
@@ -5478,10 +5472,8 @@ async function executeVerificationMailStep(step, state, options) {
             rejectedCodes: [...rejectedCodes],
           })
           : [...rejectedCodes],
-        maxAttempts: perPollMaxAttempts,
-
+        maxAttempts: 20,
         intervalMs: 3000,
-
       });
     } catch (err) {
       const errorMessage = err?.message || '';
@@ -5497,21 +5489,12 @@ async function executeVerificationMailStep(step, state, options) {
         throw new Error(blockerMessage);
       }
 
-      const resendTriggered = resendCount >= maxResendCount;
-
-
       if (!resendTriggered && inboxCheck >= resendAfterAttempts) {
-
-        resendCount += 1;
-
-        await addLog(`第 ${step} 步：连续检查 ${inboxCheck} 次仍没有新邮件，触发第 ${resendCount} 次重发后继续检查。`, 'warn');
-
+        await addLog(`第 ${step} 步：连续检查 ${inboxCheck} 次仍没有新邮件，先触发一次重发，再继续检查。`, 'warn');
         await clickResendOnSignupPage(step);
-
+        resendTriggered = true;
         continue;
-
       }
-
 
       if (inboxCheck >= maxInboxChecks) {
         throw err;
@@ -5527,36 +5510,14 @@ async function executeVerificationMailStep(step, state, options) {
       }
     }
 
-    await addLog(
-
-      `第 ${step} 步：拿到验证码 ${result.code}，准备进行第 ${rejectedCodes.size + 1} 次验证码提交。`,
-
-      'info'
-
-    );
-
+    await addLog(`Step ${step}: Got verification code: ${result.code}`);
     const submitResult = await submitVerificationCode(step, result.code);
 
-
-
     if (submitResult?.retryInbox) {
-
       rejectedCodes.add(result.code);
-
       await rememberRejectedVerificationCode(step, result.code);
-
-      await addLog(
-
-        `第 ${step} 步：第 ${rejectedCodes.size} 次验证码提交未通过（${submitResult.reason || 'retryInbox'}），返回邮箱继续获取新验证码。`,
-
-        'warn'
-
-      );
-
       continue;
-
     }
-
 
     if (step === 4) {
       await clearRejectedVerificationCodes(step);
@@ -5586,8 +5547,7 @@ async function executeVerificationMailStep(step, state, options) {
     return;
   }
 
-  throw new Error(`Step ${step}: Verification code kept being rejected after ${maxInboxChecks} inbox refresh attempts (resend attempts=${resendCount}, per-poll max attempts=${perPollMaxAttempts}).`);
-
+  throw new Error(`Step ${step}: Verification code kept being rejected after ${maxInboxChecks} inbox refresh attempts.`);
 }
 
 async function executeStep4(state) {
@@ -5603,17 +5563,11 @@ async function executeStep4(state) {
 
   const effectiveState = await ensureSignupPageReadyForVerification(state, 4);
   await executeVerificationMailStep(4, effectiveState, {
-
     filterAfterTimestamp: effectiveState.flowStartTime || 0,
-
     ...getTmailorVerificationProfile(4),
-
-    resendAfterAttempts: 2,
-
+    resendAfterAttempts: 3,
     persistLastEmailTimestamp: true,
-
   });
-
 }
 
 async function ensureSignupPageReadyForProfile(state, step = 5) {
@@ -5909,27 +5863,16 @@ async function recoverStep3PlatformLogin(error, options = {}) {
 }
 
 async function recoverStep6PlatformLogin(error, options = {}) {
-
   const state = await getState();
-
   const message = error?.message || String(error || 'unknown step 6 error');
-
   const attempt = Math.max(0, Number.parseInt(String(options?.attempt ?? 0), 10) || 0);
-
   const maxAttempts = Math.max(attempt, Number.parseInt(String(options?.maxAttempts ?? 0), 10) || 0);
-
   const retryLabel = attempt > 0 && maxAttempts > 0
-
     ? ` (retry ${attempt}/${maxAttempts})`
-
     : attempt > 0
-
       ? ` (retry ${attempt})`
-
       : '';
-
   const refreshCopy = 'Refreshing the VPS OAuth link and reopening the auth login page';
-
   await addLog(
     `Step 6: ${message} ${refreshCopy}${retryLabel} with the current email/password...`,
     'warn'
@@ -6066,17 +6009,11 @@ async function waitForStep6CompletionSignalOrRecoveredAuthState() {
 async function executeStep7(state) {
   const effectiveState = await ensureSignupPageReadyForVerification(state, 7);
   await executeVerificationMailStep(7, effectiveState, {
-
     filterAfterTimestamp: effectiveState.lastEmailTimestamp || effectiveState.flowStartTime || 0,
-
     ...getTmailorVerificationProfile(7),
-
-    resendAfterAttempts: 2,
-
+    resendAfterAttempts: 3,
     persistLastEmailTimestamp: false,
-
   });
-
 }
 
 async function inspectSignupPageRecoveryState(expectedUrl) {
@@ -6431,217 +6368,96 @@ async function executeStep8(state) {
 // ============================================================
 
 async function executeStep9(state) {
-
   let effectiveState = state;
 
-
-
   if (!effectiveState.localhostUrl) {
-
     const recoveryState = await inspectSignupPageRecoveryState(effectiveState.oauthUrl);
-
-
-
     if (recoveryState.reason) {
-
-
-
       const detail = recoveryState.url || recoveryState.title || recoveryState.reason;
-
-
-
       effectiveState = await replaySteps6Through8WithCurrentAccount(
-
-
-
-
-
         `Step 9: Step 8 did not land on localhost and instead ended on ${detail}. Refreshing the VPS OAuth link and replaying steps 6-8 with the same account...`
-
-
-
       );
-
-
-
     }
-
-
   }
-
-
 
   if (!effectiveState.localhostUrl) {
-
     throw new Error('No localhost URL. Complete step 8 first.');
-
   }
-
   if (!effectiveState.vpsUrl) {
-
     throw new Error('VPS URL not set. Please enter VPS URL in the side panel.');
-
   }
-
-
 
   await addLog('Step 9: Opening VPS panel...');
 
-
-
   let tabId = await getTabId('vps-panel');
-
   const alive = tabId && await isTabAlive('vps-panel');
 
-
-
   if (!alive) {
-
     // Create new tab in the automation window
-
-    const wid = await ensureAutomationWindowId();
-
+    const wid = await ensureAutomationWindowId('vps-panel');
     const tab = await chrome.tabs.create({ url: effectiveState.vpsUrl, active: true, windowId: wid });
-
     tabId = tab.id;
-
     await new Promise(resolve => {
-
       const listener = (tid, info) => {
-
         if (tid === tabId && info.status === 'complete') {
-
           chrome.tabs.onUpdated.removeListener(listener);
-
           resolve();
-
         }
-
       };
-
       chrome.tabs.onUpdated.addListener(listener);
-
     });
-
   } else {
-
     await chrome.tabs.update(tabId, { active: true });
-
   }
-
-
 
   // Inject scripts directly and wait for them to be ready
-
   await chrome.scripting.executeScript({
-
     target: { tabId },
-
     files: ['shared/flow-recovery.js', 'content/utils.js', 'content/vps-panel.js'],
-
   });
-
   await new Promise(r => setTimeout(r, 1000));
 
+  // Send command directly — bypass queue/ready mechanism
+  await addLog(`Step 9: Filling callback URL...`);
+  const response = await chrome.tabs.sendMessage(tabId, {
+    type: 'EXECUTE_STEP',
+    step: 9,
+    source: 'background',
+    payload: { localhostUrl: effectiveState.localhostUrl },
+  });
 
-
-  const maxFreshOauthRetries = 3;
-
-
-
-  let lastFreshOauthReason = '';
-
-
-
-  for (let attempt = 0; attempt <= maxFreshOauthRetries; attempt += 1) {
-
-    const retryLabel = attempt > 0 ? `（刷新 OAuth 后第 ${attempt}/${maxFreshOauthRetries} 次重试）` : '（首次提交）';
-
-    await addLog(`第 9 步：准备提交回调 URL ${retryLabel}。`, attempt > 0 ? 'warn' : 'info');
-
-
-
-    const currentTabId = await getTabId('vps-panel') || tabId;
-
-    const response = await chrome.tabs.sendMessage(currentTabId, {
-
+  if (response?.retryWithFreshOauth) {
+    const refreshedState = await replaySteps6Through8WithCurrentAccount(
+      `Step 9: VPS reported that the authorization link is no longer pending (${response.detail || response.reason || 'not pending'}). Refreshing OAuth and retrying steps 6-9 with the same account...`
+    );
+    const retryTabId = await getTabId('vps-panel') || tabId;
+    const retryResponse = await chrome.tabs.sendMessage(retryTabId, {
       type: 'EXECUTE_STEP',
-
       step: 9,
-
       source: 'background',
-
-      payload: { localhostUrl: effectiveState.localhostUrl },
-
+      payload: { localhostUrl: refreshedState.localhostUrl },
     });
 
-
-
-    if (response?.retryWithFreshOauth) {
-
-      lastFreshOauthReason = response.detail || response.reason || 'not pending';
-
-
-
-      if (attempt >= maxFreshOauthRetries) {
-
-        const message = `Step 9 failed after ${maxFreshOauthRetries} fresh OAuth retries because the authorization link is still not pending (${lastFreshOauthReason}). Retry from step 6 again or inspect the VPS panel manually.`;
-
-        notifyStepError(9, message);
-
-        throw new Error(message);
-
-      }
-
-
-
-      await addLog(
-
-        `第 9 步：第 ${attempt + 1}/${maxFreshOauthRetries + 1} 次最终认证遇到链接失效，准备刷新第 ${attempt + 1}/${maxFreshOauthRetries} 次 OAuth 链接后继续。原因：${lastFreshOauthReason}`,
-
-        'warn'
-
-      );
-
-
-
-      effectiveState = await replaySteps6Through8WithCurrentAccount(
-
-        `Step 9: VPS reported that the authorization link is no longer pending (${lastFreshOauthReason}). Refreshing OAuth and retrying the final authentication steps with the same account...`
-
-      );
-
-      continue;
-
+    if (retryResponse?.retryWithFreshOauth) {
+      const message = 'Step 9 failed again because the authorization link is still not pending after refreshing OAuth. Retry from step 6 once more or inspect the VPS panel manually.';
+      notifyStepError(9, message);
+      throw new Error(message);
     }
 
-
-
-    if (response?.error) {
-
-      throw new Error(response.error);
-
+    if (retryResponse?.error) {
+      throw new Error(retryResponse.error);
     }
-
-
-
-    await addLog(`第 9 步：第 ${attempt + 1}/${maxFreshOauthRetries + 1} 次最终认证提交流程已完成。`, 'ok');
 
     return;
-
   }
 
+  if (response?.error) {
+    throw new Error(response.error);
+  }
 }
 
-
-
 // ============================================================
-
 // Open Side Panel on extension icon click
-
 // ============================================================
-
-
 
 chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true });
-

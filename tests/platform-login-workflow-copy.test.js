@@ -1108,6 +1108,23 @@ test('auto run closes signup and mailbox tabs at each round boundary before rebu
   );
 });
 
+test('new source tabs choose the current focused browser window instead of a stale cached automation window', () => {
+  const backgroundSource = readProjectFile('background.js');
+
+  assert.match(
+    backgroundSource,
+    /async function getFocusedNormalWindowId\(\) \{[\s\S]*chrome\.windows\.getLastFocused\(\{[\s\S]*windowTypes:\s*\['normal'\]/i
+  );
+  assert.match(
+    backgroundSource,
+    /async function ensureAutomationWindowId\(source = ''\) \{[\s\S]*const focusedWindowId = await getFocusedNormalWindowId\(\);[\s\S]*pickAutomationWindowId\(\{[\s\S]*focusedWindowId[\s\S]*cachedWindowId:\s*automationWindowId/i
+  );
+  assert.match(
+    backgroundSource,
+    /const wid = await ensureAutomationWindowId\(source\);/i
+  );
+});
+
 test('auto run phase 2 uses a distinct email-source binding after the per-run setup block', () => {
   const backgroundSource = readProjectFile('background.js');
 

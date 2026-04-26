@@ -3802,6 +3802,113 @@ test('step 4 returns to inbox polling when the verification page enters a retry 
 });
 
 
+test('step 7 waits for a manual auth verification challenge instead of accepting the verification step early', async () => {
+  let challengeVisible = false;
+  let challengeChecks = 0;
+  const submitButton = {
+    getBoundingClientRect() {
+      return { width: 120, height: 40 };
+    },
+  };
+  const codeInput = {
+    getBoundingClientRect() {
+      return { width: 120, height: 40 };
+    },
+    dispatchEvent() {},
+    focus() {},
+  };
+  const turnstileContainer = {
+    className: 'cf-turnstile',
+    getBoundingClientRect() {
+      return { width: 320, height: 80 };
+    },
+  };
+
+  const context = createContext({
+    href: 'https://auth.openai.com/email-verification',
+    bodyText: 'Enter the 6-digit code',
+    waitForElementImpl(selector) {
+      if (/input/.test(selector)) {
+        return Promise.resolve(codeInput);
+      }
+      return Promise.reject(new Error('missing'));
+    },
+    querySelectorImpl(selector) {
+      if (selector === 'button[type="submit"]') {
+        return challengeVisible ? null : submitButton;
+      }
+      if (selector.includes('.cf-turnstile') || selector.includes('.html-captcha')) {
+        return challengeVisible ? turnstileContainer : null;
+      }
+      if (selector.includes('input[name="cf-turnstile-response"]')) {
+        return challengeVisible ? { value: '' } : null;
+      }
+      return null;
+    },
+    querySelectorAllImpl(selector) {
+      context.document.body.innerText = challengeVisible
+        ? 'Please verify you are human before continuing.'
+        : 'Enter the 6-digit code';
+
+      if (selector.includes('.cf-turnstile') || selector.includes('.html-captcha') || selector.includes('cf-turnstile-response')) {
+        if (!challengeVisible) {
+          return [];
+        }
+        challengeChecks += 1;
+        if (challengeChecks >= 3) {
+          challengeVisible = false;
+          context.location.href = 'https://auth.openai.com/about-you';
+          context.document.body.innerText = 'What is your age?';
+          return [];
+        }
+        return [turnstileContainer];
+      }
+
+      if (selector.includes('input[name="code"]') || selector.includes('input[inputmode="numeric"]') || selector.includes('input[maxlength="1"]')) {
+        return challengeVisible ? [] : [codeInput];
+      }
+
+      if (selector.includes('input[name="name"]') || selector.includes('input[name="age"]')) {
+        return challengeVisible ? [] : [];
+      }
+
+      return [];
+    },
+  });
+  context.fillInput = () => {};
+  context.simulateClick = () => {
+    challengeVisible = true;
+    context.document.body.innerText = 'Please verify you are human before continuing.';
+  };
+
+  loadSignupPage(context);
+
+  const listener = context.__listeners[0];
+  assert.ok(listener, 'expected signup-page to register a runtime listener');
+
+  const response = await new Promise((resolve, reject) => {
+    const keepAlive = listener(
+      { type: 'FILL_CODE', step: 7, payload: { code: '123456' } },
+      {},
+      (result) => resolve(result)
+    );
+    assert.equal(keepAlive, true);
+    setTimeout(() => reject(new Error('timeout waiting for response')), 3000);
+  });
+
+  assert.equal(response?.ok, true);
+  assert.ok(challengeChecks >= 3, 'expected the auth challenge polling path to run');
+  assert.deepEqual(context.__errors, []);
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(context.__completions)),
+    [
+      {
+        step: 7,
+      },
+    ]
+  );
+});
+
 test('step 6 fails instead of completing when the login page shows incorrect email or password', async () => {
   const state = {
     bodyText: '输入密码',

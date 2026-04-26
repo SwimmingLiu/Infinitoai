@@ -1040,6 +1040,9 @@ async function waitForVerificationSubmissionOutcome(step, hadRejectedStateBefore
 
 
     const visibleText = getVisiblePageText();
+    if (await waitForAuthHumanVerificationIfPresent(step)) {
+      continue;
+    }
 
     const hasVisibleProfileInput = hasVisibleProfileFormInput();
 
