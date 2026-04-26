@@ -314,46 +314,46 @@ async function step9_vpsVerify(payload) {
     }
   }
 
-  const maxSubmitAttempts = 4;
-  for (let attempt = 1; attempt <= maxSubmitAttempts; attempt++) {
-    await humanPause(450, 1200);
-    fillInput(urlInput, localhostUrl);
-    simulateClick(submitBtn);
-    log(`Step 9: Clicked "提交回调 URL" (${attempt}/${maxSubmitAttempts}), waiting for authentication result...`);
-
-    const outcome = await waitForStep9Outcome();
-    if (outcome.kind === 'success') {
-      log('第 9 步：认证成功！', 'ok');
-      reportComplete(9);
-      return;
-    }
-
-    if (outcome.kind === 'transient_502') {
-      if (attempt < maxSubmitAttempts) {
-        log(`第 9 步：VPS 回调提交命中 502（${outcome.detail}），准备重试提交。`, 'warn');
-        await sleep(1500);
-        continue;
-      }
-
-      throw new Error(
-        `VPS callback submit kept hitting 502 after ${maxSubmitAttempts} attempts (${outcome.detail}). ` +
-        'The account is usually already registered. Retry step 9 again first; if it still fails, continue from step 6 to re-authenticate instead of restarting from step 1.'
-      );
-    }
-
-    if (outcome.kind === 'auth_link_not_pending') {
-      log(`第 9 步：VPS 提示授权链接已不再处于 pending 状态（${outcome.detail}），准备请求新的 OAuth 恢复流程。`, 'warn');
-      return {
-        retryWithFreshOauth: true,
-        reason: 'auth_link_not_pending',
-        detail: outcome.detail,
-      };
-    }
-
-    log(`第 9 步：提交后的状态为“${outcome.detail}”，可能仍在处理中。`, 'warn');
-    reportComplete(9);
-    return;
-  }
+  const maxSubmitAttempts = 4;
+  for (let attempt = 1; attempt <= maxSubmitAttempts; attempt++) {
+    await humanPause(450, 1200);
+    fillInput(urlInput, localhostUrl);
+    simulateClick(submitBtn);
+    log(`第 9 步：已点击“提交回调 URL”，这是当前 OAuth 链接下的第 ${attempt}/${maxSubmitAttempts} 次提交。`, attempt > 1 ? 'warn' : 'info');
+
+    const outcome = await waitForStep9Outcome();
+    if (outcome.kind === 'success') {
+      log(`第 9 步：当前 OAuth 链接下第 ${attempt}/${maxSubmitAttempts} 次提交认证成功！`, 'ok');
+      reportComplete(9);
+      return;
+    }
+
+    if (outcome.kind === 'transient_502') {
+      if (attempt < maxSubmitAttempts) {
+        log(`第 9 步：当前 OAuth 链接下第 ${attempt}/${maxSubmitAttempts} 次提交命中 502（${outcome.detail}），准备继续重试提交。`, 'warn');
+        await sleep(1500);
+        continue;
+      }
+
+      throw new Error(
+        `VPS callback submit kept hitting 502 after ${maxSubmitAttempts} attempts (${outcome.detail}). ` +
+        'The account is usually already registered. Retry step 9 again first; if it still fails, continue from step 6 to re-authenticate instead of restarting from step 1.'
+      );
+    }
+
+    if (outcome.kind === 'auth_link_not_pending') {
+      log(`第 9 步：当前 OAuth 链接下第 ${attempt}/${maxSubmitAttempts} 次提交时，VPS 提示授权链接已不再处于 pending 状态（${outcome.detail}），准备请求新的 OAuth 恢复流程。`, 'warn');
+      return {
+        retryWithFreshOauth: true,
+        reason: 'auth_link_not_pending',
+        detail: outcome.detail,
+      };
+    }
+
+    log(`第 9 步：当前 OAuth 链接下第 ${attempt}/${maxSubmitAttempts} 次提交后的状态为“${outcome.detail}”，可能仍在处理中。`, 'warn');
+    reportComplete(9);
+    return;
+  }
 
   throw new Error('Step 9 ended unexpectedly before the VPS callback could be confirmed.');
 }

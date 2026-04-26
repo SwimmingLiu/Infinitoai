@@ -1026,88 +1026,184 @@ function submitVerificationCodeWithFallback(codeInput) {
 }
 
 async function waitForVerificationSubmissionOutcome(step, hadRejectedStateBeforeSubmit = false, timeout = 5000) {
+
   const startUrl = location.href;
+
   const start = Date.now();
 
+
+
   while (Date.now() - start < timeout) {
+
     throwIfStopped();
+
+
 
     const visibleText = getVisiblePageText();
     if (await waitForAuthHumanVerificationIfPresent(step)) {
       continue;
     }
+
     const hasVisibleProfileInput = hasVisibleProfileFormInput();
+
     const onReadyProfilePage = hasReadyProfilePage(visibleText);
+
     const onCanonicalAboutYouPage = step === 4
+
       && isCanonicalAboutYouPage(location.href)
+
       && !hasVisibleCredentialInput();
+
     const onCanonicalAboutYouProfilePage = onCanonicalAboutYouPage && hasVisibleProfileInput;
+
     const hasVisibleVerificationInputNow = hasVisibleVerificationInput();
+
     const hasVisibleInput = hasActiveVerificationInput();
+
     if (isBlockingAuthFatalError(visibleText)) {
+
       throw new Error('Auth fatal error page detected after verification submit.');
+
     }
+
     if (isUnsupportedEmailBlockingStep(step) && isUnsupportedEmailText(visibleText, location.href)) {
+
       throw new Error(getUnsupportedEmailBlockedMessage(step));
+
     }
+
     if (step === 7 && isPhoneVerificationRequiredText(visibleText, location.href)) {
+
       throw new Error(getPhoneVerificationBlockedMessage(step));
+
     }
+
     if (isVerificationCodeRejectedText(visibleText) && !hadRejectedStateBeforeSubmit) {
+
       return {
+
         retryInbox: true,
+
         reason: 'verification-code-rejected',
+
       };
+
     }
-    if (step === 7 && /email-verification/i.test(location.href) && !hasVisibleInput && isVerificationRetryStateText(visibleText)) {
-      throw new Error('Verification page entered retry state after submitting the verification code. Restart this run.');
+
+    if (
+
+      (step === 4 || step === 7)
+
+      && /email-verification/i.test(location.href)
+
+      && !hasVisibleInput
+
+      && isVerificationRetryStateText(visibleText)
+
+    ) {
+
+      return {
+
+        retryInbox: true,
+
+        reason: 'verification-page-retry-state',
+
+      };
+
     }
+
+
 
     if (location.href !== startUrl || onReadyProfilePage || onCanonicalAboutYouPage) {
+
       return {
+
         accepted: true,
+
         reason: onReadyProfilePage
+
           ? 'profile-form-visible'
+
           : (onCanonicalAboutYouPage ? 'canonical-about-you-profile-page' : 'page-advanced'),
+
       };
+
     }
+
+
 
     if (!hasVisibleVerificationInputNow && !hasVisibleProfileInput && !hasVerificationContextText(visibleText)) {
+
       return {
+
         accepted: true,
+
         reason: 'verification-form-hidden',
+
       };
+
     }
 
+
+
     await sleep(250);
+
   }
+
+
 
   if (hadRejectedStateBeforeSubmit && hasActiveVerificationInput()) {
+
     return {
+
       retryInbox: true,
+
       reason: 'verification-still-blocked',
+
     };
+
   }
+
+
 
   if (step === 4 && isCanonicalAboutYouPage(location.href) && !hasVisibleCredentialInput()) {
+
     return {
+
       accepted: true,
+
       reason: 'canonical-about-you-profile-page',
+
     };
+
   }
+
+
 
   if (hasActiveVerificationInput() || (hasVisibleProfileFormInput() && !hasReadyProfilePage(getVisiblePageText()))) {
+
     return {
+
       retrySubmit: true,
+
       reason: 'verification-still-visible',
+
     };
+
   }
 
+
+
   return {
+
     accepted: true,
+
     reason: 'no-rejection-detected',
+
   };
+
 }
+
 
 function getVisiblePageText() {
   const bodyText = document.body?.innerText || '';
@@ -1549,6 +1645,96 @@ async function waitForStep5NameInputOrRecoveredLanding(timeout = STEP5_NAME_INPU
   }
 
   return null;
+}
+
+function isCheckboxChecked(checkbox) {
+  if (!checkbox) {
+    return false;
+  }
+
+  if (typeof checkbox.checked === 'boolean') {
+    return checkbox.checked;
+  }
+
+  const ariaChecked = String(checkbox.getAttribute?.('aria-checked') || '').toLowerCase();
+  if (ariaChecked === 'true') {
+    return true;
+  }
+  if (ariaChecked === 'false') {
+    return false;
+  }
+
+  return String(checkbox.getAttribute?.('data-state') || '').toLowerCase() === 'checked';
+}
+
+function getConsentCheckboxText(checkbox) {
+  if (!checkbox) {
+    return '';
+  }
+
+  const labelText = Array.from(checkbox.labels || [])
+    .map((label) => label?.textContent || '')
+    .join(' ');
+  const closestLabelText = checkbox.closest?.('label')?.textContent || '';
+  const parentText = checkbox.parentElement?.textContent || '';
+  const ownText = checkbox.textContent || '';
+  const ariaLabel = checkbox.getAttribute?.('aria-label') || '';
+  const title = checkbox.getAttribute?.('title') || '';
+
+  return normalizeAuthPageText(
+    [labelText, closestLabelText, parentText, ownText, ariaLabel, title]
+      .filter(Boolean)
+      .join(' ')
+  );
+}
+
+function getVisibleConsentCheckboxes() {
+  return Array.from(document.querySelectorAll('input[type="checkbox"], [role="checkbox"]'))
+    .filter((checkbox) => isElementVisible(checkbox));
+}
+
+function isAllConsentCheckboxText(text = '') {
+  return /\u6211\u540c\u610f\u4ee5\u4e0b\u6240\u6709\u5404\u9879|\u540c\u610f\u4ee5\u4e0b\u6240\u6709\u5404\u9879|agree to all|accept all|all (?:items|consents|permissions)/i.test(String(text || ''));
+}
+
+function isRequiredConsentCheckboxText(text = '') {
+  return /\u5f3a\u5236|required|must accept|accept to continue|\u8bf7\u63a5\u53d7\u4ee5\u7ee7\u7eed/i.test(String(text || ''));
+}
+
+async function clickAboutYouConsentCheckbox(step, checkbox, description) {
+  if (!checkbox || isCheckboxChecked(checkbox)) {
+    return false;
+  }
+
+  await humanPause(350, 900);
+  simulateClick(checkbox);
+  await sleep(150);
+
+  if (!isCheckboxChecked(checkbox)) {
+    throw new Error(`Step ${step} blocked: could not accept the about-you ${description}.`);
+  }
+
+  log(`Step ${step}: Accepted the about-you ${description}.`);
+  return true;
+}
+
+async function acceptAboutYouConsentCheckboxesIfPresent(step = 5) {
+  const allConsentCheckbox = getVisibleConsentCheckboxes()
+    .find((checkbox) => !isCheckboxChecked(checkbox) && isAllConsentCheckboxText(getConsentCheckboxText(checkbox)));
+
+  let acceptedAny = false;
+  if (allConsentCheckbox) {
+    acceptedAny = await clickAboutYouConsentCheckbox(step, allConsentCheckbox, 'all-consent checkbox');
+  }
+
+  const requiredCheckboxes = getVisibleConsentCheckboxes()
+    .filter((checkbox) => !isCheckboxChecked(checkbox) && isRequiredConsentCheckboxText(getConsentCheckboxText(checkbox)));
+  for (const checkbox of requiredCheckboxes) {
+    await clickAboutYouConsentCheckbox(step, checkbox, 'required consent checkbox');
+    acceptedAny = true;
+  }
+
+  return acceptedAny;
 }
 
 async function waitForProfileSubmissionOutcome(step, timeout = STEP5_PROFILE_SUBMIT_OUTCOME_TIMEOUT_MS) {
@@ -2015,7 +2201,7 @@ function getLoginCredentialErrorMessage() {
   return 'Incorrect email address or password.';
 }
 
-function isAuthReturnHomeIssueText(text) {
+function isAuthReturnHomeIssueTextLegacy(text) {
   const normalized = String(text || '').replace(/\s+/g, ' ').trim();
   if (!normalized) {
     return false;
@@ -2039,6 +2225,28 @@ function getAuthReturnHomeRecoveryErrorMessage(step) {
     return 'Step 6 recoverable: auth issue page offered a "return home" recovery link. Refresh the VPS OAuth link and retry with the same email and password.';
   }
   return 'Step 3 blocked: auth issue page offered a "return home" recovery link. Reopen the platform login page and retry with the same email and password.';
+}
+
+function isAuthReturnHomeIssueText(text) {
+  const normalized = String(text || '').replace(/\s+/g, ' ').trim();
+  if (!normalized) {
+    return false;
+  }
+
+  if (/we ran into an issue while authenticating you/i.test(normalized)) {
+    return true;
+  }
+
+  if (/authentication token has been invalidated/i.test(normalized)) {
+    return true;
+  }
+
+  if (/invalid[_\s-]?state/i.test(normalized)) {
+    return true;
+  }
+
+  return /something went wrong|oops/i.test(normalized)
+    && /authenticating you|help\.openai\.com|authentication token has been invalidated|sign(?:ing)? in again|retry/i.test(normalized);
 }
 
 function isAuthRetryActionIssueText(text) {
@@ -2430,6 +2638,8 @@ async function step5_fillNameBirthday(payload) {
   }
 
   // Click "完成帐户创建" button
+  await acceptAboutYouConsentCheckboxesIfPresent(5);
+
   await sleep(500);
   const submitReadiness = await waitForProfileSubmitButtonOrOutcome(5);
   if (submitReadiness?.button) {
@@ -2473,7 +2683,6 @@ Object.assign(authFlow, {
   handleAuthReturnHomeRecovery,
   handleAuthRetryActionRecovery,
   resolveLatestPageOauthUrl,
-  waitForAuthHumanVerificationIfPresent,
   waitForLoginPasswordField,
   waitForLoginSubmissionOutcome,
 });

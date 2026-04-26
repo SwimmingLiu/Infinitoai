@@ -12,4 +12,5 @@ Thumbs.db
 .idea/
 .vscode/
 playwright-debug-artifacts/
+.alma-snapshots
 .files/

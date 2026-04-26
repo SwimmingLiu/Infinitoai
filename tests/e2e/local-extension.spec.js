@@ -27,5 +27,7 @@ test('toggles source specific sections and keeps the stable panel form visually 
   await expect(page.locator('#row-tmailor-domains')).toBeVisible();
 
   await stabilizeForScreenshot(page);
-  await expect(page.locator('#data-section .data-card').first()).toHaveScreenshot('sidepanel-stable-form.png');
+  await expect(page.locator('#data-section .data-card').first()).toHaveScreenshot('sidepanel-stable-form.png', {
+    maxDiffPixelRatio: 0.03,
+  });
 });

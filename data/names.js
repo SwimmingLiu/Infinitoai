@@ -13,13 +13,33 @@ const LAST_NAMES = [
   'Lee', 'Perez', 'Thompson', 'White', 'Harris', 'Sanchez', 'Clark', 'Ramirez', 'Lewis', 'Robinson',
 ];
 
+function pickSharedProfileSeed(randomFn = Math.random) {
+  if (typeof pickRandomProfileSeed === 'function') {
+    return pickRandomProfileSeed(randomFn);
+  }
+
+  if (globalThis.ProfileSeeds?.pickRandomProfileSeed) {
+    return globalThis.ProfileSeeds.pickRandomProfileSeed(randomFn);
+  }
+
+  return null;
+}
+
 /**
  * Generate a random full name.
  * @returns {{ firstName: string, lastName: string }}
  */
-function generateRandomName() {
-  const firstName = FIRST_NAMES[Math.floor(Math.random() * FIRST_NAMES.length)];
-  const lastName = LAST_NAMES[Math.floor(Math.random() * LAST_NAMES.length)];
+function generateRandomName(randomFn = Math.random) {
+  const sharedSeed = pickSharedProfileSeed(randomFn);
+  if (sharedSeed) {
+    return {
+      firstName: sharedSeed.firstName,
+      lastName: sharedSeed.lastName,
+    };
+  }
+
+  const firstName = FIRST_NAMES[Math.floor(randomFn() * FIRST_NAMES.length)];
+  const lastName = LAST_NAMES[Math.floor(randomFn() * LAST_NAMES.length)];
   return { firstName, lastName };
 }
 
@@ -27,12 +47,21 @@ function generateRandomName() {
  * Generate a random birthday (age 19-25).
  * @returns {{ year: number, month: number, day: number }}
  */
-function generateRandomBirthday() {
+function generateRandomBirthday(randomFn = Math.random) {
+  const sharedSeed = pickSharedProfileSeed(randomFn);
+  if (sharedSeed) {
+    return {
+      year: sharedSeed.year,
+      month: sharedSeed.month,
+      day: sharedSeed.day,
+    };
+  }
+
   const currentYear = new Date().getFullYear();
-  const age = 19 + Math.floor(Math.random() * 7); // 19 to 25
+  const age = 19 + Math.floor(randomFn() * 7); // 19 to 25
   const year = currentYear - age;
-  const month = 1 + Math.floor(Math.random() * 12); // 1 to 12
+  const month = 1 + Math.floor(randomFn() * 12); // 1 to 12
   const maxDay = new Date(year, month, 0).getDate(); // days in that month
-  const day = 1 + Math.floor(Math.random() * maxDay);
+  const day = 1 + Math.floor(randomFn() * maxDay);
   return { year, month, day };
 }

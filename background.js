@@ -1,6 +1,6 @@
 // background.js — Service Worker: orchestration, state, tab management, message routing
 
-importScripts('shared/email-addresses.js', 'shared/mail-provider-rotation.js', 'shared/tmailor-domains.js', 'shared/tmailor-api.js', 'shared/tmailor-errors.js', 'shared/tmailor-mailbox-strategy.js', 'shared/tmailor-verification-profiles.js', 'shared/flow-recovery.js', 'shared/content-script-queue.js', 'shared/login-verification-codes.js', 'data/names.js', 'shared/flow-runner.js', 'shared/runtime-errors.js', 'shared/auto-run.js', 'shared/auto-run-failure-stats.js', 'shared/duck-mail-errors.js', 'shared/sidepanel-settings.js', 'shared/tab-reclaim.js', 'shared/account-records.js');
+importScripts('shared/email-addresses.js', 'shared/mail-provider-rotation.js', 'shared/tmailor-domains.js', 'shared/tmailor-api.js', 'shared/tmailor-errors.js', 'shared/tmailor-mailbox-strategy.js', 'shared/tmailor-verification-profiles.js', 'shared/flow-recovery.js', 'shared/content-script-queue.js', 'shared/login-verification-codes.js', 'data/profile-seeds.js', 'data/names.js', 'shared/flow-runner.js', 'shared/runtime-errors.js', 'shared/auto-run.js', 'shared/auto-run-failure-stats.js', 'shared/duck-mail-errors.js', 'shared/sidepanel-settings.js', 'shared/tab-reclaim.js', 'shared/account-records.js');
 
 const LOG_PREFIX = '[Infinitoai:bg]';
 const DUCK_AUTOFILL_URL = 'https://duckduckgo.com/email/settings/autofill';
@@ -14,6 +14,14 @@ const MAX_LOG_ENTRIES_PER_ROUND = 500;
 const MAX_LOG_ROUNDS = 3;
 const STEP5_MAX_PROFILE_RETRY_ATTEMPTS = 2;
 const STEP6_MAX_OAUTH_RETRY_ATTEMPTS = 10;
+const FRESH_PIPELINE_SITE_DATA_ORIGINS = [
+  'https://platform.openai.com',
+  'https://auth.openai.com',
+  'https://auth0.openai.com',
+  'https://accounts.openai.com',
+  'https://chatgpt.com',
+  'https://tmailor.com',
+];
 const { getStepDelayAfter, runStepSequence } = FlowRunner;
 const {
   buildMailPollRecoveryPlan,
@@ -296,6 +304,7 @@ const DEFAULT_STATE = {
   oauthUrl: null,
   email: null,
   password: null,
+  profileSeed: null,
   accounts: [], // { email, password, createdAt }
   accountRecords: [],
   currentAccountRecordId: null,
@@ -658,6 +667,28 @@ async function setPasswordState(password) {
   broadcastDataUpdate({ password });
 }
 
+function resolveProfileSeed(seed = null) {
+  const normalizedSeed = typeof normalizeProfileSeed === 'function'
+    ? normalizeProfileSeed(seed)
+    : null;
+
+  if (normalizedSeed) {
+    return normalizedSeed;
+  }
+
+  if (typeof pickRandomProfileSeed === 'function') {
+    return pickRandomProfileSeed();
+  }
+
+  return null;
+}
+
+async function setProfileSeedState(profileSeed) {
+  const normalizedSeed = resolveProfileSeed(profileSeed);
+  await setState({ profileSeed: normalizedSeed });
+  return normalizedSeed;
+}
+
 function normalizeRejectedVerificationCodes(codes = []) {
   const result = [];
   for (const code of codes || []) {
@@ -911,6 +942,43 @@ async function closeAutoRunRoundTabs() {
     await chrome.tabs.remove(tabIdsToClose);
   } catch (err) {
     console.warn(LOG_PREFIX, 'Failed to close prior auto-run signup/mail tabs:', err?.message || err);
+  }
+}
+
+async function clearFreshPipelineSiteData(options = {}) {
+  const reason = typeof options?.reason === 'string' ? options.reason.trim() : '';
+
+  if (!chrome?.browsingData?.remove) {
+    console.warn(LOG_PREFIX, 'chrome.browsingData.remove is unavailable. Skipping fresh-pipeline site cleanup.');
+    return false;
+  }
+
+  try {
+    await chrome.browsingData.remove(
+      { origins: FRESH_PIPELINE_SITE_DATA_ORIGINS },
+      {
+        cacheStorage: true,
+        cookies: true,
+        indexedDB: true,
+        localStorage: true,
+        serviceWorkers: true,
+        webSQL: true,
+      }
+    );
+
+    await addLog(
+      `Fresh pipeline prep: cleared OpenAI / ChatGPT / TMailor site data${reason ? ` (${reason})` : ''}.`,
+      'info'
+    );
+    return true;
+  } catch (err) {
+    const detail = err?.message || String(err || 'Unknown browsingData error');
+    console.warn(LOG_PREFIX, `Fresh-pipeline site cleanup failed${reason ? ` (${reason})` : ''}:`, detail);
+    await addLog(
+      `Fresh pipeline prep: failed to clear OpenAI / ChatGPT / TMailor site data${reason ? ` (${reason})` : ''}. Continuing with the existing browser state. | Debug: ${detail}`,
+      'warn'
+    );
+    return false;
   }
 }
 
@@ -2407,6 +2475,12 @@ async function runManualFlow(startStep) {
   try {
     handedOffPausedAutoRun = await handOffPausedAutoRunToManual(startStep);
     inheritedRunContext = manualHandoffRunContext;
+    if (Number(startStep) === 2) {
+      await closeAutoRunRoundTabs();
+      await clearFreshPipelineSiteData({
+        reason: 'manual-step2-fresh-pipeline',
+      });
+    }
     await addLog(`Manual continuation: step ${startStep} -> 9`, 'info');
     await runStepSequence({
       startStep,
@@ -3689,6 +3763,9 @@ async function autoRunLoop(totalRuns, infiniteMode = false, options = {}) {
         autoRunning: true,
       };
       await closeAutoRunRoundTabs();
+      await clearFreshPipelineSiteData({
+        reason: 'auto-run-fresh-pipeline',
+      });
       await resetState({ preserveLogHistory: true });
       await setState(keepSettings);
       await startNewLogRound(`Run ${runTargetText}`);
@@ -4133,9 +4210,11 @@ async function executeStep3(state) {
     throw new Error('No email address. Paste email in Side Panel first.');
   }
 
-  const password = state.customPassword || state.password || generatePassword();
+  const profileSeed = resolveProfileSeed(state.profileSeed);
+  const password = state.customPassword || state.password || (profileSeed && profileSeed.password) || generatePassword();
   await setEmailState(email);
   await setPasswordState(password);
+  await setProfileSeedState(profileSeed);
   if (emailSource === 'tmailor') {
     await setTmailorEmailLease({
       email,
@@ -5591,8 +5670,9 @@ async function executeStep5(state) {
     return;
   }
 
-  const { firstName, lastName } = generateRandomName();
-  const { year, month, day } = generateRandomBirthday();
+  const profileSeed = await setProfileSeedState(state.profileSeed);
+  const { firstName, lastName } = profileSeed || generateRandomName();
+  const { year, month, day } = profileSeed || generateRandomBirthday();
   const profileReadyState = await ensureSignupPageReadyForProfile(state, 5);
 
   if (isStableStep5SuccessUrl(profileReadyState?.url)) {
